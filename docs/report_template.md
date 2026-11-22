@@ -12,15 +12,36 @@
 
 | ‖δΘ‖ (S = 6890) | RE paper | RE ours |
 |---|---|---|
-| 1e-2 | ≈ 7.1e-2 | |
-| 1e-1 | ≈ 7.0e-1 | |
+| 1e-6 | ≲ 1e-5 | 2.6e-6 |
+| 1e-4 | ≲ 1e-3 | 5.7e-4 |
+| 1e-2 | ≈ 7.1e-2 | 2.5e-2 |
+| 1e-1 | ≈ 7.0e-1 | 2.8e-1 |
 
-| S (‖δΘ‖ = 1e-2) | RE paper | RE ours | Time ours (ms, GPU: ) |
-|---|---|---|---|
-| 10 | ≈ 0.7 | | |
-| 100 | ≈ 0.05–0.08 | | |
-| 1000 | < 0.1 | | |
-| 6890 | < 0.1 | | |
+‖f‖ grows linearly with ‖δΘ‖ (slope 1) from 1e-9 to 1e-2, as in Fig. B.7; linearity breaks down above ≈ 3e-2.
+Our RE is about 3x lower than the paper's. Θ0 was sampled as 0.2·N(0, I) around the rest pose (the paper does not say how it samples Θ0), where SMPL is more linear; re-run with AMASS poses (`--amass`) to compare.
+
+| S (‖δΘ‖ = 1e-2) | RE paper | RE ours | Time paper (ms, A100) | Time ours (ms, T4) |
+|---|---|---|---|---|
+| 10 | ≈ 0.7 | 0.81 | ~15 | 48 |
+| 30 | | 0.11 | | 47 |
+| 100 | ≈ 0.05–0.08 | 0.076 | ~15 | 47 |
+| 300 | | 0.036 | | 47 |
+| 1000 | < 0.1 | 0.033 | ~20 | 48 |
+| 6890 | < 0.1 | 0.053 | ~320 | 48 |
+
+The accuracy trend matches: few points give a poor estimate, S ≥ 100 is accurate, S = 1000 is a good choice.
+Our time does not grow with S because we compute the Jacobian with central finite differences: every evaluation runs the full SMPL mesh, so the cost is independent of S. The paper's time grows with S, which suggests a per-output (reverse-mode) Jacobian.
+
+### Real SMPL sanity checks (tests/check_smpl.py)
+
+- All three models load (6890 vertices, 13776 faces); the mesh is watertight.
+- The SMPL template already self-intersects in the rest pose at 41 vertices (33 inner thigh / crotch, 8 feet; winding number ≈ 1.45, so not a numerical artefact). This matches the paper's remark that the crotch is prone to natural self-intersections. These vertices are ignored when counting collisions.
+- Fully bent elbows: 228 colliding vertices, so real collisions are detected.
+
+### Simple target field without training (Sec. 4.4, Fig. 3)
+
+Hand-to-target distance shrinks from 0.474 m to 0.225 m (T = 400; longer T would reach the target), so the ODE + Jacobian + J^† chain works.
+Colliding vertices grow from 0 to 7 while the arm is raised. Only the hand region has a non-zero velocity; the rest of the arm follows through the least-squares projection J^†, and the armpit (excluded from sampling) has no points to constrain it. This is a concrete case where the non-intersection guarantee holds only approximately after the projection onto SMPL.
 
 ## 3. Training
 
