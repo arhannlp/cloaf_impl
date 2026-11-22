@@ -1,0 +1,10 @@
+torch>=2.1
+torchdiffeq
+smplx
+numpy
+scipy
+scikit-learn      # keypose K-means (opsiyonel)
+trimesh           # watertight kontrolü, mesh IO
+aitviewer         # SMPL dizilerini animasyon olarak izlemek (lokal, ekranlı makine)
+matplotlib
+jupyter
