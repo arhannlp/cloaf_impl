@@ -1,6 +1,6 @@
 # CLOAF re-implementation
 
-Project: *Correcting Self Intersections in SMPL* (supervisor: Tony Wang, TUM)
+Project: *Correcting Self Intersections in SMPL*
 Paper: Davydov et al., *CLOAF: CoLlisiOn-Aware Human Flow*, CVPR 2024 ([arXiv 2403.09050](https://arxiv.org/abs/2403.09050))
 
 The official code (github.com/cvlab-epfl/CLOAF) was not available, so this is a re-implementation from the paper.
