@@ -67,6 +67,43 @@ def bezier_blend(r, r_in, r_out, alphas=(0, 0, 0, 1, 1)):
     return sum(a * comb(4, p) * u ** p * (1 - u) ** (4 - p) for p, a in enumerate(alphas))
 
 
+class PointTargetField(torch.nn.Module):
+    """Training-free baseline: every sampled point moves straight towards its own
+    position in the target pose, f_i = (x_i(Θ1) - x_i) / Δt.
+
+    This is the "simple field" of Supp. C ("Simple Field vs NN"): integrating it is
+    an interpolation in coordinate space that minimises ||x(Θ) - x(Θ1)||. The paper
+    says it can get stuck in local optima; the learned network is meant to do better.
+    It is NOT a function of position alone (two points at the same place can have
+    different targets), so the non-intersection argument does not strictly apply.
+    Use it as a sanity check of the pipeline and as a baseline for the network."""
+
+    def forward(self, x, theta_t, theta_1, dt, x_target=None):
+        return (x_target - x) / dt.clamp_min(1e-3)[:, None, None]
+
+
+class SmoothTargetField(torch.nn.Module):
+    """Training-free field that IS a smooth function of position (our own addition,
+    not in the paper). The per-point target velocities v_j = (x_j(Θ1) - x_j) / Δt
+    are spread over space with a Gaussian kernel of width sigma (metres):
+
+        f(y) = Σ_j K(y, x_j) v_j / Σ_j K(y, x_j),   K = exp(-||y - x_j||² / 2σ²)
+
+    Because f depends only on the position y, points that touch get (almost) the
+    same velocity and cannot pass through each other (Supp. A, CLOAF.mp4 remark).
+    Small sigma -> follows the target closely; large sigma -> safer but blurrier."""
+
+    def __init__(self, sigma: float = 0.03):
+        super().__init__()
+        self.sigma = sigma
+
+    def forward(self, x, theta_t, theta_1, dt, x_target=None):
+        v = (x_target - x) / dt.clamp_min(1e-3)[:, None, None]         # (B,S,3)
+        d2 = torch.cdist(x, x) ** 2                                      # (B,S,S)
+        K = torch.softmax(-d2 / (2 * self.sigma ** 2), dim=-1)          # normalised kernel
+        return K @ v
+
+
 class TargetField(torch.nn.Module):
     """f(x) = F (x_T - x) / (||x_T - x|| + eps) in the source region, blended to 0 outside.
     r_in = 10 mm, r_out = 30 mm, F = 1e-3, eps = 1e-6 (Supp. C).
@@ -110,26 +147,45 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
     verts = body.vertices(poses, betas, global_orient)
     counts = count_collisions(verts, body.faces)
     out = poses.clone().to(body.dtype)
+    last_free = None          # most recent output pose known to be collision-free
+    skipped = []
 
-    # --- first frame ---
-    if counts[0] > 0:
-        out[0] = find_initial_pose(body, poses[0:1], sel(betas, 0), sel(global_orient, 0),
-                                   strategy=init_strategy)[0]
-        out[0] = cloaf_solve(body, field, out[0:1], poses[0:1], S, sel(betas, 0),
-                             sel(global_orient, 0), **solve_kw)[0][-1, 0]
+    def collides(theta, k):
+        return count_collisions(body.vertices(theta, sel(betas, k), sel(global_orient, k)),
+                                body.faces)[0] > 0
 
-    for k in range(1, N):
+    def start_pose(candidate, k):
+        """Collision-free Θ0 for frame k: candidate, else jitter, else last free pose."""
+        if candidate is not None and not collides(candidate, k):
+            return candidate
+        try:
+            return find_initial_pose(body, candidate if candidate is not None else poses[k:k + 1],
+                                     sel(betas, k), sel(global_orient, k), strategy=init_strategy)
+        except RuntimeError:
+            if last_free is not None and not collides(last_free, k):
+                return last_free
+        return None
+
+    for k in range(N):
         if mode == "colliding_only" and counts[k] == 0:
-            continue                                    # keep the original frame
-        theta_0 = out[k - 1:k]
-        # Re-check Θ0 with the target frame's betas/orient (the shape may change!)
-        v0 = body.vertices(theta_0, sel(betas, k), sel(global_orient, k))
-        if count_collisions(v0, body.faces)[0] > 0:
-            theta_0 = find_initial_pose(body, theta_0, sel(betas, k), sel(global_orient, k),
-                                        strategy=init_strategy)
+            last_free = out[k:k + 1].clone()          # keep the original frame
+            continue
+        if k == 0 and counts[0] == 0:
+            last_free = out[0:1].clone()              # nothing to correct, start from here
+            continue
+        # Θ0 = previous output; re-check it with this frame's betas/orient (the shape may change!)
+        theta_0 = start_pose(out[k - 1:k] if k > 0 else poses[0:1], k)
+        if theta_0 is None:                           # no collision-free start: leave frame as is
+            skipped.append(k)
+            continue
         traj, _ = cloaf_solve(body, field, theta_0, poses[k:k + 1], S,
                               sel(betas, k), sel(global_orient, k), **solve_kw)
         out[k] = traj[-1, 0]
+        if not collides(out[k:k + 1], k):
+            last_free = out[k:k + 1].clone()
+    if skipped:
+        print(f"warning: no collision-free start pose for {len(skipped)} frame(s), "
+              f"left unchanged: {skipped[:10]}{' ...' if len(skipped) > 10 else ''}")
     return out, counts
 
 

@@ -115,31 +115,55 @@ def main():
     ap.add_argument("--minutes", type=float, default=None,
                     help="stop after this many minutes and save (time budget)")
     ap.add_argument("--max_gap", type=int, default=4, help="max frame gap between Θ0 and Θ1")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue from <out>.state (network, optimizer, iteration)")
     a = ap.parse_args()
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+    state_path, log_path = a.out + ".state", a.out + ".log.csv"
 
     body = SMPLBody(a.smpl, device=a.device)
     net = MotionField().to(a.device)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr)
     sampler = PairSampler(a.amass, max_gap=a.max_gap, device=a.device)
 
+    start = 0
+    if a.resume and Path(state_path).exists():
+        st = torch.load(state_path, map_location=a.device)
+        net.load_state_dict(st["net"])
+        opt.load_state_dict(st["opt"])
+        start = st["it"] + 1
+        print(f"resumed from {state_path} at iteration {start}")
+    elif not Path(log_path).exists() or not a.resume:
+        Path(log_path).write_text("iteration,loss,seconds\n")
+
+    def save(it):
+        torch.save(net.state_dict(), a.out)  # plain weights: what the scripts load
+        torch.save({"net": net.state_dict(), "opt": opt.state_dict(), "it": it}, state_path)
+
     t0 = time.time()
-    for it in range(a.iters):
+    running = []
+    it = start
+    for it in range(start, a.iters):
         th0, th1 = sampler(a.batch)
         loss = trajectory_loss(body, net, th0, th1, a.S, a.M)
         opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
         opt.step()
+        running.append(loss.item())
         if it % 100 == 0:
-            print(f"it {it:6d}  loss {loss.item():.3e}  ({time.time() - t0:.0f}s)", flush=True)
+            avg = sum(running) / len(running)
+            running = []
+            print(f"it {it:6d}  loss(avg100) {avg:.3e}  ({time.time() - t0:.0f}s)", flush=True)
+            with open(log_path, "a") as fh:
+                fh.write(f"{it},{avg:.6e},{time.time() - t0:.0f}\n")
         if it % 1000 == 0:
-            torch.save(net.state_dict(), a.out)
+            save(it)
         if a.minutes is not None and time.time() - t0 > 60 * a.minutes:
-            print(f"time budget reached after {it + 1} iterations")
+            print(f"time budget reached after {it + 1 - start} iterations")
             break
-    torch.save(net.state_dict(), a.out)
-    print(f"saved {a.out}")
+    save(it)
+    print(f"saved {a.out} (iteration {it})")
 
 
 if __name__ == "__main__":

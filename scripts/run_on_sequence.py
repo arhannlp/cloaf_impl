@@ -14,6 +14,10 @@ the clean motion is known, you can also measure how close CLOAF gets to it.
       --seq data/amass/CMU/01/01_01_poses.npz --field checkpoints/field.pt \
       --frames 90 --corrupt --mode all
 
+Without a trained network, use a training-free field:
+  ... --field point_target                 (Supp. C baseline, no non-intersection property)
+  ... --field smooth_target --sigma 0.03   (smooth in space -> touching points move together)
+
 Then watch the result:
   python scripts/view_results.py --smpl data/body_models/smpl --result results/sequence.npz
 """
@@ -28,7 +32,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloaf.body import SMPLBody, L_SHOULDER, R_SHOULDER  # noqa: E402
 from cloaf.collision import count_collisions  # noqa: E402
-from cloaf.integrate import correct_sequence  # noqa: E402
+from cloaf.integrate import PointTargetField, SmoothTargetField, correct_sequence  # noqa: E402
 from cloaf.model import MotionField  # noqa: E402
 
 
@@ -83,11 +87,24 @@ def vertex_dist_mm(body, a, b, go):
         return 1000 * (body.vertices(a, None, go) - body.vertices(b, None, go)).norm(dim=-1).mean(-1)
 
 
+def jerk_mm(body, poses, go):
+    """(mean, max) over frames of the mean per-vertex third difference, in mm."""
+    with torch.no_grad():
+        v = body.vertices(poses, None, go)
+    if len(v) < 4:
+        return float("nan"), float("nan")
+    j = 1000 * (v[3:] - 3 * v[2:-1] + 3 * v[1:-2] - v[:-3]).norm(dim=-1).mean(-1)
+    return j.mean().item(), j.max().item()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--smpl", required=True)
     ap.add_argument("--seq", required=True)
-    ap.add_argument("--field", required=True, help="trained checkpoint, e.g. checkpoints/field.pt")
+    ap.add_argument("--field", required=True,
+                    help="trained checkpoint (e.g. checkpoints/field.pt), or a training-free "
+                         "field: 'point_target' (Supp. C baseline) or 'smooth_target' (see --sigma)")
+    ap.add_argument("--sigma", type=float, default=0.03, help="kernel width (m) for smooth_target")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--start", type=int, default=0)
@@ -109,8 +126,13 @@ def main():
     go = torch.as_tensor(go, device=body.device, dtype=body.dtype)
     inp = corrupt(body, clean, go, a.corrupt_start, a.corrupt_len, a.corrupt_amp) if a.corrupt else clean
 
-    field = MotionField().to(body.device).eval()
-    field.load_state_dict(torch.load(a.field, map_location=body.device))
+    if a.field == "point_target":
+        field = PointTargetField()
+    elif a.field == "smooth_target":
+        field = SmoothTargetField(a.sigma)
+    else:
+        field = MotionField().to(body.device).eval()
+        field.load_state_dict(torch.load(a.field, map_location=body.device))
     solve_kw = dict(method="rk4", options=dict(step_size=0.1)) if a.solver == "rk4" else {}
 
     t = time.time()
@@ -127,9 +149,28 @@ def main():
     print(f"colliding vertices     : before {int(before.sum())}, after {int(after.sum())} (sum over frames)")
     print(f"vertex shift vs input  : colliding frames {shift[col_frames].mean():.1f} mm, "
           f"clean frames {shift[~col_frames].mean():.1f} mm")
+    d_in = d_out = float("nan")
     if a.corrupt:
-        print(f"distance to clean mocap: input {vertex_dist_mm(body, inp, clean, go).mean():.1f} mm, "
-              f"CLOAF {vertex_dist_mm(body, out, clean, go).mean():.1f} mm")
+        d_in = vertex_dist_mm(body, inp, clean, go).mean().item()
+        d_out = vertex_dist_mm(body, out, clean, go).mean().item()
+        print(f"distance to clean mocap: input {d_in:.1f} mm, CLOAF {d_out:.1f} mm")
+    # smoothness: third time-difference of the vertices (sudden jumps show up as peaks)
+    jerk = {k: jerk_mm(body, p, go) for k, p in [("clean", clean), ("input", inp), ("cloaf", out)]}
+    print("jerk mean / max (mm)   : " + ", ".join(f"{k} {m:.2f} / {x:.2f}" for k, (m, x) in jerk.items()))
+
+    # one row per run -> results/summary.csv, easy to paste into the report
+    summary = Path(a.out).parent / "summary.csv"
+    new = not summary.exists()
+    with open(summary, "a") as fh:
+        if new:
+            fh.write("sequence,mode,solver,frames,col_frames_before,col_frames_after,col_verts_before,"
+                     "col_verts_after,shift_colliding_mm,shift_clean_mm,dist_clean_input_mm,"
+                     "dist_clean_cloaf_mm,jerk_max_input,jerk_max_cloaf,sec_per_frame\n")
+        fh.write(f"{Path(a.seq).stem}[{Path(a.field).stem}],{a.mode},{a.solver},{n},{int(col_frames.sum())},"
+                 f"{int((after > 0).sum())},{int(before.sum())},{int(after.sum())},"
+                 f"{shift[col_frames].mean():.1f},{shift[~col_frames].mean():.1f},{d_in:.1f},{d_out:.1f},"
+                 f"{jerk['input'][1]:.2f},{jerk['cloaf'][1]:.2f},{secs / n:.2f}\n")
+    print(f"appended a row to {summary}")
 
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     np.savez(a.out, clean=clean.cpu().numpy(), input=inp.cpu().numpy(), corrected=out.cpu().numpy(),

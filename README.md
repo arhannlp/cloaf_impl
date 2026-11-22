@@ -16,6 +16,7 @@ The official code (github.com/cvlab-epfl/CLOAF) was not available, so this is a 
 | Simple hand-crafted field (Sec. 4.4) | Works; **no training needed** | SMPL files |
 | Learned motion field `f_ω` (`model.py`) | Code runs, but the network is **untrained** | Training on AMASS (GPU) |
 | Pose correction (`correct_sequence`, `run_on_sequence.py`) | Code runs, but the output is **meaningless until `f_ω` is trained** | A trained checkpoint |
+| Training-free fields `point_target` (Supp. C baseline) and `smooth_target` (our variant) | Code runs; not yet tested on the real body | SMPL files |
 | 3DPW evaluation (`eval_3dpw.py`) | Draft | 3DPW, HMR2.0 predictions, `J_regressor_h36m.npy` |
 
 **In short:** if you give it SMPL poses today, it will output SMPL parameters, but they will not be corrected poses. The network's weights are random. CLOAF only works after Step 4 (training).
@@ -23,6 +24,8 @@ The official code (github.com/cvlab-epfl/CLOAF) was not available, so this is a 
 ---
 
 ## Fast path to a working CLOAF
+
+The detailed overnight plan with checklists is in [PLAN.md](PLAN.md); the write-up template is in [docs/report_template.md](docs/report_template.md).
 
 1. Get the SMPL files and one AMASS sub-dataset (e.g. CMU, "SMPL+H G").
 2. Open `notebooks/colab_cloaf.ipynb` in Google Colab with a GPU (or use a university GPU).
