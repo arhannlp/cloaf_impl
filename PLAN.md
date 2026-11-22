@@ -25,11 +25,15 @@ Nothing else works without this.
   ```bash
   python tests/check_smpl.py --smpl data/body_models/smpl
   ```
-- [ ] **AMASS.** Register at amass.is.tue.mpg.de and download **one** sub-dataset, "SMPL+H G". Pick a small one if the big ones download slowly; one is enough for tonight.
+- [ ] **AMASS.** Register at amass.is.tue.mpg.de (separate account). In the **Bodies** column click **"SMPL+H G"** for:
+  - **ACCAD** (252 motions, 27 min): training
+  - **SFU** (44 motions, 15 min): test sequences, never seen in training
+
+  Skip the big sets (CMU, KIT, BMLrub, WEIZMANN) tonight.
 - [ ] **Upload to Google Drive:**
   ```
   MyDrive/cloaf_data/SMPL_python_v.1.1.0.zip
-  MyDrive/cloaf_data/amass/<subset>.tar.bz2
+  MyDrive/cloaf_data/amass/ACCAD.tar.bz2, SFU.tar.bz2
   ```
 - [ ] **Local setup, while uploading.** Clone the repo, create a venv, `pip install -r requirements.txt`, then `python tests/smoke_test.py`. You need this local setup later to watch the animations.
 
