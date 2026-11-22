@@ -134,7 +134,7 @@ class TargetField(torch.nn.Module):
 # ====================================================================== #
 @torch.no_grad()
 def correct_sequence(body, field, poses, betas=None, global_orient=None,
-                     mode="all", init_strategy="jitter", S=1000, **solve_kw):
+                     mode="all", init_strategy="jitter", S=1000, progress=False, **solve_kw):
     """
     poses : (N,69) estimated poses (may contain collisions)
     mode  : "all"            -> paper: every frame, Θ0 = previous corrected, Θ1 = estimate
@@ -164,7 +164,11 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
                 return last_free
         return None
 
+    import time
+    t_start = time.time()
     for k in range(N):
+        if progress and k % 10 == 0:
+            print(f"  frame {k}/{N} ({time.time() - t_start:.0f} s)", flush=True)
         if mode == "colliding_only" and counts[k] == 0:
             last_free = out[k:k + 1].clone()          # keep the original frame
             continue

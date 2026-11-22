@@ -136,7 +136,8 @@ def main():
     solve_kw = dict(method="rk4", options=dict(step_size=0.1)) if a.solver == "rk4" else {}
 
     t = time.time()
-    out, before = correct_sequence(body, field, inp, None, go, mode=a.mode, S=a.S, **solve_kw)
+    out, before = correct_sequence(body, field, inp, None, go, mode=a.mode, S=a.S, progress=True,
+                                   **solve_kw)
     secs = time.time() - t
     with torch.no_grad():
         after = body.count_collisions(body.vertices(out, None, go))
