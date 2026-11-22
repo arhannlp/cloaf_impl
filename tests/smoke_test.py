@@ -1,8 +1,12 @@
 """
-Gerçek SMPL dosyası OLMADAN kodun uçtan uca çalıştığını test eder.
-Küre şeklinde sahte bir "SMPL" modeli oluşturur (sayılar anlamsızdır!).
+End-to-end test that runs WITHOUT the real SMPL files.
+It builds a fake ellipsoid "SMPL" model (the numbers are meaningless as
+human-body results; they only check that the code is wired correctly).
 
   python tests/smoke_test.py
+
+Each check prints PASS/FAIL and what it verifies. Read this file next to the
+output: every block shows the shortest way to call one part of the code.
 """
 import pickle
 import sys
@@ -27,6 +31,7 @@ def icosphere(n_sub=3):
     v = [np.array(x, float) / np.linalg.norm(x) for x in v]
     for _ in range(n_sub):
         cache, nf = {}, []
+
         def mid(a, b):
             k = tuple(sorted((a, b)))
             if k not in cache:
@@ -42,8 +47,9 @@ def icosphere(n_sub=3):
 
 
 def make_fake_smpl(folder):
+    """Writes a fake SMPL_NEUTRAL.pkl: an elongated ellipsoid with 24 joints."""
     v, f = icosphere(3)
-    v = v * np.array([0.25, 0.8, 0.15])                     # uzun elipsoid "vücut"
+    v = v * np.array([0.25, 0.8, 0.15])
     J = np.stack([np.array([np.sin(i), -0.8 + 1.6 * i / 23, 0.05 * np.cos(i)]) * [0.2, 1, 1]
                   for i in range(24)])
     Jreg = np.zeros((24, len(v)))
@@ -60,6 +66,11 @@ def make_fake_smpl(folder):
         pickle.dump(model, fh)
 
 
+def check(name, ok, detail):
+    print(f"[{'PASS' if ok else 'FAIL'}] {name}: {detail}")
+    return ok
+
+
 def main():
     from cloaf.body import SMPLBody, pinv_solve
     from cloaf.collision import count_collisions, winding_numbers
@@ -67,7 +78,7 @@ def main():
     from cloaf.train import trajectory_loss
     from cloaf.integrate import cloaf_solve, correct_sequence
 
-    # sahte mesh 6890 vertexten az: smplx'in ekstra keypoint seçicisini devre dışı bırak
+    # The fake mesh has fewer than 6890 vertices: disable smplx's extra keypoint selector
     import smplx.vertex_joint_selector as vjs
     vjs.VertexJointSelector.forward = lambda self, vertices, joints: joints
 
@@ -75,46 +86,69 @@ def main():
     make_fake_smpl(tmp)
     body = SMPLBody(tmp, device="cpu", exclude_radius=0.0)
     torch.manual_seed(0)
+    results = []
 
-    # 1) Jacobian: fd vs jacfwd ve lineerlik
+    # 1) Jacobian (body.py, paper Eq. 3): finite differences vs autodiff must agree
     th0 = 0.1 * torch.randn(2, 69, dtype=torch.float64)
     sample = body.sample_surface(300)
     J_fd = body.jacobian(th0, sample, method="fd")
     try:
         J_ad = body.jacobian(th0, sample, method="jacfwd")
-        print("jacobian fd vs jacfwd max fark:", (J_fd - J_ad).abs().max().item())
+        diff = (J_fd - J_ad).abs().max().item()
+        results.append(check("1 Jacobian fd vs jacfwd", diff < 1e-6, f"max diff {diff:.1e}"))
     except Exception as e:  # noqa: BLE001
-        print("jacfwd çalışmadı (fd kullan):", type(e).__name__, e)
+        print(f"[SKIP] 1 jacfwd not available ({type(e).__name__}); use method='fd'")
+
+    # 2) Linearity (paper Eq. 3 / Fig. 5): J·dΘ ≈ X(Θ+dΘ) - X(Θ) for a small dΘ
     d = 1e-4 * torch.randn(2, 69, dtype=torch.float64)
     f = (body.points(th0 + d, sample) - body.points(th0, sample)).reshape(2, -1)
-    print("J d ≈ f göreli hata:", ((J_fd @ d[..., None])[..., 0] - f).norm().item() / f.norm().item())
-    print("pinv RE:", ((pinv_solve(J_fd, f) - d).norm() / d.norm()).item(),
-          "(sahte modelde çok eklem etkisiz olabilir -> yüksek olabilir)")
+    lin = ((J_fd @ d[..., None])[..., 0] - f).norm().item() / f.norm().item()
+    results.append(check("2 J·dΘ ≈ ΔX", lin < 1e-2, f"relative error {lin:.1e}"))
 
-    # 2) GWN: yüzey vertexleri ~0.5, iç nokta ~1
+    # 3) Pseudo-inverse (body.py pinv_solve, paper Eq. 5): recover dΘ from the point motion
+    re = ((pinv_solve(J_fd, f) - d).norm() / d.norm()).item()
+    results.append(check("3 J^† recovers dΘ", re < 1e-1, f"RE {re:.1e} (paper uses RE<0.1)"))
+
+    # 4) Collision detection (collision.py): GWN ≈ 1 inside, ≈ 0.5 on the surface
     v = body.vertices(th0[:1])[0]
-    w = winding_numbers(v.float(), body.faces, torch.zeros(1, 3))
-    ws = winding_numbers(v.float(), body.faces)
-    print(f"GWN merkez {w.item():.3f} (≈1), yüzey ort {ws.mean():.3f} (≈0.5)")
-    print("çakışma sayısı:", count_collisions(v[None], body.faces).tolist())
+    w_in = winding_numbers(v.float(), body.faces, torch.zeros(1, 3)).item()
+    w_surf = winding_numbers(v.float(), body.faces).mean().item()
+    n_col = count_collisions(v[None], body.faces).item()
+    results.append(check("4 winding numbers", abs(w_in - 1) < 0.05 and abs(w_surf - 0.5) < 0.1,
+                         f"center {w_in:.3f} (≈1), surface mean {w_surf:.3f} (≈0.5), "
+                         f"colliding vertices {n_col} (expect 0)"))
 
-    # 3) eğitim adımı
+    # 5) Training step (train.py, paper Eq. 9): loss is finite and gradients flow
     net = MotionField()
     opt = torch.optim.Adam(net.parameters(), 1e-4)
     th1 = th0 + 0.05 * torch.randn_like(th0)
-    for it in range(3):
+    losses = []
+    for _ in range(3):
         loss = trajectory_loss(body, net, th0, th1, S=200, M=4)
-        opt.zero_grad(); loss.backward(); opt.step()
-        print(f"train it {it} loss {loss.item():.3e}")
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        losses.append(loss.item())
+    gnorm = sum(p.grad.norm() for p in net.parameters() if p.grad is not None).item()
+    results.append(check("5 training step", np.isfinite(losses).all() and gnorm > 0,
+                         f"losses {[f'{x:.2e}' for x in losses]}, grad norm {gnorm:.2e}"))
 
-    # 4) ODE çözümü + dizi düzeltme
+    # 6) ODE solve (integrate.py, paper Eq. 6). The network is UNTRAINED, so the final
+    #    pose is NOT expected to reach the target: this only checks that it runs.
     traj, nfe = cloaf_solve(body, net, th0[:1], th1[:1], S=200, rtol=1e-3, atol=1e-4)
-    print("ODE nfe:", nfe, "| son pozun hedefe uzaklığı:", (traj[-1] - th1[:1]).norm().item())
+    dist = (traj[-1] - th1[:1]).norm().item()
+    results.append(check("6 ODE solve runs", np.isfinite(dist),
+                         f"{nfe} solver evaluations, distance to target {dist:.2f} "
+                         f"(meaningless until the network is trained)"))
+
+    # 7) Sequence correction (integrate.py, paper Sec. 4.2 + extension)
     seq = th0[:1] + torch.cumsum(0.02 * torch.randn(4, 69, dtype=torch.float64), 0)
     out, counts = correct_sequence(body, net, seq, S=200, mode="colliding_only",
                                    rtol=1e-3, atol=1e-4)
-    print("dizi düzeltme tamam:", out.shape, counts.tolist())
-    print("SMOKE TEST OK")
+    results.append(check("7 correct_sequence runs", out.shape == seq.shape,
+                         f"output {tuple(out.shape)}, collisions per frame {counts.tolist()}"))
+
+    print("\nSMOKE TEST", "OK" if all(results) else "FAILED")
 
 
 if __name__ == "__main__":

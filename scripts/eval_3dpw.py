@@ -1,18 +1,18 @@
 """
-ADIM 3/5 — 3DPW-test değerlendirmesi (Table 1, 2, 4).
+STEP 3/5 — 3DPW-test evaluation (Table 1, 2, 4).
 
-Girdi: HMR2.0 (4D-Humans) çıktıları, frame başına SMPL parametreleri.
-  predictions.npz içinde her dizi için:
+Input: HMR2.0 (4D-Humans) outputs, SMPL parameters per frame.
+  predictions.npz contains, for each sequence:
     <seq>/<person>/body_pose (N,69) axis-angle, global_orient (N,3), betas (N,10)
-  (4D-Humans rotasyon matrisi verir -> axis-angle'a çevir:
-   pytorch3d.transforms.matrix_to_axis_angle veya roma kütüphanesi)
+  (4D-Humans outputs rotation matrices -> convert to axis-angle with
+   pytorch3d.transforms.matrix_to_axis_angle or the roma library)
 
-Önce --no_cloaf ile SADECE baseline'ı ölç; HMR2.0 satırını tuttur:
+First measure ONLY the baseline with --no_cloaf; match the HMR2.0 row:
    MPJPE 82.0 | P-MPJPE 52.7 | Accel 16.1 | Col.Rate@0 39.2 | @100 21.6
-Sonra CLOAF ile:
+Then with CLOAF:
    MPJPE 82.3 | P-MPJPE 53.2 | Accel 9.4  | Col.Rate@0 0.0
 
-  python scripts/eval_3dpw.py --smpl data/body_models --pw3d data/3DPW \
+  python scripts/eval_3dpw.py --smpl data/body_models/smpl --pw3d data/3DPW \
       --pred data/hmr2_3dpw_test.npz --field checkpoints/field.pt --mode all
 """
 import argparse
@@ -83,7 +83,7 @@ def main():
         pj, gj = joints14(pv, Jreg)[v], joints14(gv, Jreg)[v]
         E["mpjpe"].append(mpjpe(pj, gj) * len(pj))
         E["pa"].append(pa_mpjpe(pj, gj) * len(pj))
-        E["accel"].append(accel_error(pj, gj) * (len(pj) - 2))   # TODO: valid boşluklarını böl
+        E["accel"].append(accel_error(pj, gj) * (len(pj) - 2))   # TODO: split at gaps in the valid mask
         E["counts"].append(count_collisions(pv[v], body.faces).cpu())
 
     n = sum(len(c) for c in E["counts"])

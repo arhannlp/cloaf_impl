@@ -1,21 +1,21 @@
 """
-ADIM 1 — EĞİTİM GEREKTİRMEYEN İLK SAYISAL DOĞRULAMA
-Makale Fig. 5 ve Supp. Fig. B.7 / B.8'i yeniden üretir.
+STEP 1 — FIRST NUMERICAL CHECK, NO TRAINING NEEDED
+Reproduces Fig. 5 and Supp. Fig. B.7 / B.8 of the paper.
 
-  f(δΘ) = X(Θ0 + δΘ) - X(Θ0)          (Denk. B.13)
+  f(δΘ) = X(Θ0 + δΘ) - X(Θ0)          (Eq. B.13)
   δΘ^   = J^† f
-  RE    = ||δΘ^ - δΘ|| / ||δΘ||        (Denk. 12)
+  RE    = ||δΘ^ - δΘ|| / ||δΘ||        (Eq. 12)
 
-Makaledeki hedef değerler (supervisor'a karşılaştırma tablosu olarak sun):
-  - ||δΘ|| = 1e-2, S = 6890        -> RE ≈ 7.1e-2   (Fig. B.8 sağ)
-  - ||δΘ|| = 1e-1, S = 6890        -> RE ≈ 7.0e-1   (Fig. B.8 sol)
-  - ||δΘ|| ∈ [1e-7, 1e-1] (yeşil)  -> RE ≲ 1e-1     (Fig. B.7)
-  - S = 10 -> RE ≈ 0.7 ; S ≥ 100 -> RE ≈ 0.05-0.08 ; S=1000 iyi denge (Fig. 5)
-  - Jacobian süresi: S ≤ 1000 için ~15-20 ms, S = 6890 için ~320 ms (A100)
-  - 10 tekrar ortalaması, çift hassasiyet.
+Target values from the paper (present them to the supervisor as a comparison table):
+  - ||δΘ|| = 1e-2, S = 6890        -> RE ≈ 7.1e-2   (Fig. B.8 right)
+  - ||δΘ|| = 1e-1, S = 6890        -> RE ≈ 7.0e-1   (Fig. B.8 left)
+  - ||δΘ|| ∈ [1e-7, 1e-1] (green)   -> RE ≲ 1e-1    (Fig. B.7)
+  - S = 10 -> RE ≈ 0.7 ; S ≥ 100 -> RE ≈ 0.05-0.08 ; S=1000 good trade-off (Fig. 5)
+  - Jacobian time: ~15-20 ms for S ≤ 1000, ~320 ms for S = 6890 (A100)
+  - Averaged over 10 restarts, double precision.
 
-Kullanım:
-  python scripts/check_linearity.py --smpl data/body_models [--amass data/amass_smpl_30fps.npz]
+Usage:
+  python scripts/check_linearity.py --smpl data/body_models/smpl [--amass data/amass_smpl_30fps.npz]
 """
 import argparse
 import sys
@@ -49,7 +49,7 @@ def rel_error(body, th0, mag, S, gen, jac_method):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--smpl", required=True)
-    ap.add_argument("--amass", default=None, help="Θ0'ı gerçek pozlardan örnekle")
+    ap.add_argument("--amass", default=None, help="sample Θ0 from real poses")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--restarts", type=int, default=10)
     ap.add_argument("--jac", default="fd", choices=["fd", "jacfwd"])
@@ -62,10 +62,10 @@ def main():
         P = torch.as_tensor(np.load(a.amass)["body_pose"], dtype=body.dtype, device=body.device)
         pick = lambda: P[torch.randint(len(P), (1,), device=body.device, generator=gen)]
     else:
-        # TODO: makale "bir SMPL vektörü örnekliyoruz" diyor -> dağılım belirsiz
+        # TODO: the paper only says "we sample an SMPL vector" -> distribution unknown
         pick = lambda: 0.2 * torch.randn(1, 69, device=body.device, dtype=body.dtype, generator=gen)
 
-    # --- Fig. B.7: S=6890, büyüklük taraması ---
+    # --- Fig. B.7: S=6890, sweep over the magnitude ---
     mags = np.logspace(-9, 1, 21)
     print("\n[Fig. B.7]  S=6890")
     print(f"{'||dTheta||':>12} {'||f||':>12} {'RE':>10}")
@@ -75,7 +75,7 @@ def main():
         b7.append(r)
         print(f"{m:12.1e} {r[1]:12.3e} {r[0]:10.3e}")
 
-    # --- Fig. 5: ||δΘ||=1e-2, S taraması ---
+    # --- Fig. 5: ||δΘ||=1e-2, sweep over S ---
     Ss = [10, 30, 100, 300, 1000, 2000, 4000, 6890]
     print("\n[Fig. 5]  ||dTheta||=1e-2")
     print(f"{'S':>6} {'RE':>10} {'time ms':>10}")

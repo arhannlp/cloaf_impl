@@ -1,11 +1,10 @@
 """
-3DPW değerlendirme metrikleri (Sec. 4.1): MPJPE, P-MPJPE (PA-MPJPE), Accel.Err, Col.Rate.
-Standart 3DPW protokolü (SPIN / VIBE / HMR2.0 ile aynı):
-  - 14 LSP eklemi, H36M regressor'ı (J_regressor_h36m.npy, SPIN data paketinden)
-  - Pelvis (iki kalçanın ortası) hizalaması, mm cinsinden
-  - GT: cinsiyete göre SMPL; tahmin: neutral SMPL
+3DPW evaluation metrics (Sec. 4.1): MPJPE, P-MPJPE (PA-MPJPE), Accel.Err, Col.Rate.
+Standard 3DPW protocol (same as SPIN / VIBE / HMR2.0):
+  - 14 LSP joints from the H36M regressor (J_regressor_h36m.npy, SPIN data package)
+  - Pelvis (mid-hip) alignment, in mm
+  - GT: gendered SMPL; prediction: neutral SMPL
 """
-import numpy as np
 import torch
 
 H36M_TO_J14 = [3, 2, 1, 4, 5, 6, 16, 15, 14, 11, 12, 13, 8, 10]
@@ -26,7 +25,7 @@ def mpjpe(pred, gt):
 
 
 def procrustes(S1, S2):
-    """S1'i S2'ye benzerlik dönüşümüyle hizala (batch). (N,J,3)"""
+    """Align S1 to S2 with a similarity transform (batched). (N,J,3)"""
     mu1, mu2 = S1.mean(1, keepdim=True), S2.mean(1, keepdim=True)
     X1, X2 = S1 - mu1, S2 - mu2
     var1 = (X1 ** 2).sum((1, 2))
@@ -44,9 +43,9 @@ def pa_mpjpe(pred, gt):
 
 
 def accel_error(pred, gt):
-    """VIBE'deki compute_error_accel: ikinci farkların farkı (mm/frame^2).
-    Makale mm/s^2 diyor ama literatür (VIBE, TCMR) aynı formülü kullanıyor.
-    Dikkat: sadece ardışık geçerli (valid) frame'ler üzerinde hesapla."""
+    """compute_error_accel from VIBE: difference of second differences (mm/frame^2).
+    The paper writes mm/s^2, but the literature (VIBE, TCMR) uses this same formula.
+    Careful: only compute over consecutive valid frames."""
     p, g = _pelvis_align(pred), _pelvis_align(gt)
     ap = p[:-2] - 2 * p[1:-1] + p[2:]
     ag = g[:-2] - 2 * g[1:-1] + g[2:]
@@ -54,6 +53,7 @@ def accel_error(pred, gt):
 
 
 def temporal_jerk(poses_or_joints):
-    """Uzantı için: düzeltilmiş ve düzeltilmemiş frame geçişlerindeki ani sıçramaları ölç."""
+    """For the extension: measure sudden jumps at transitions between corrected
+    and uncorrected frames (third difference along time)."""
     x = poses_or_joints
     return (x[3:] - 3 * x[2:-1] + 3 * x[1:-2] - x[:-3]).norm(dim=-1)

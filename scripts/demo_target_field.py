@@ -1,10 +1,10 @@
 """
-ADIM 2 — EĞİTİMSİZ ENTEGRASYON TESTİ (Sec. 4.4, Fig. 3-4, Supp. C)
-Sol kolu bir hedef noktaya doğru hareket ettiren basit alan:
+STEP 2 — INTEGRATION TEST WITHOUT TRAINING (Sec. 4.4, Fig. 3-4, Supp. C)
+A simple field that moves the left hand towards a target point:
   f(x) = F (x_T - x)/(||x_T - x|| + eps), F=1e-3, eps=1e-6, r_in=10mm, r_out=30mm
-Bu, ağ eğitmeden önce ODE + Jacobian + pseudo-inverse zincirinin çalıştığını gösterir.
+This shows that the ODE + Jacobian + pseudo-inverse chain works before any training.
 
-  python scripts/demo_target_field.py --smpl data/body_models [--box]
+  python scripts/demo_target_field.py --smpl data/body_models/smpl [--box]
 """
 import argparse
 import sys
@@ -24,16 +24,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--smpl", required=True)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    ap.add_argument("--T", type=float, default=400.0, help="entegrasyon süresi (F=1e-3 m/birim)")
+    ap.add_argument("--T", type=float, default=400.0, help="integration time (F=1e-3 m per unit)")
     ap.add_argument("--steps", type=int, default=40)
-    ap.add_argument("--box", action="store_true", help="hedefin önüne engel kutu koy")
+    ap.add_argument("--box", action="store_true", help="put a box obstacle in front of the target")
     ap.add_argument("--out", default="results/target_field.npz")
     a = ap.parse_args()
 
     body = SMPLBody(a.smpl, device=a.device)
     th0 = torch.zeros(1, 69, device=body.device, dtype=body.dtype)
     v0 = body.vertices(th0)[0]
-    # kaynak bölge: sol el/önkol (en baskın skinning ağırlığı sol bilek/el olan vertexler)
+    # source region: left hand/wrist (vertices whose dominant skinning weight is L_wrist/L_hand)
     W = body.smpl.lbs_weights
     region = (W.argmax(-1) == 20) | (W.argmax(-1) == 22)   # 20=L_wrist, 22=L_hand
     target = v0[region].mean(0) + torch.tensor([0.0, 0.45, 0.15], device=body.device, dtype=body.dtype)
@@ -44,14 +44,14 @@ def main():
         box = (c - 0.08, c + 0.08)
     field = TargetField(body, region, target.float(), box=box)
     sample = body.sample_surface(1000)
-    ode = CLOAFODE(body, field, th0, sample, t1=a.T)     # theta_1 kullanılmıyor (alan hedefi var)
+    ode = CLOAFODE(body, field, th0, sample, t1=a.T)     # theta_1 is unused (the field has its own target)
     ts = torch.linspace(0, a.T, a.steps, device=body.device, dtype=body.dtype)
     with torch.no_grad():
         traj = odeint(ode, th0, ts, method="rk4", options=dict(step_size=a.T / 200))
         verts = body.vertices(traj[:, 0])
         hand = verts[:, region].mean(1)
-        print("el-hedef mesafesi (m):", (hand - target).norm(dim=-1)[::5].cpu().numpy().round(3))
-        print("çakışma sayıları:", count_collisions(verts, body.faces)[::5].cpu().numpy())
+        print("hand-target distance (m):", (hand - target).norm(dim=-1)[::5].cpu().numpy().round(3))
+        print("colliding vertices:", count_collisions(verts, body.faces)[::5].cpu().numpy())
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     np.savez(a.out, verts=verts.float().cpu().numpy(), faces=body.faces.cpu().numpy(),
              target=target.cpu().numpy())

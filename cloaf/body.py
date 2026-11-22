@@ -1,12 +1,12 @@
 """
-SMPL wrapper: yüzey nokta örnekleme, X(Θ) ve Jacobian J = dX/dΘ.
+SMPL wrapper: surface point sampling, X(Θ) and the Jacobian J = dX/dΘ.
 
-Makaledeki karşılıklar:
-  - Θ  : 69 boyutlu body_pose (23 eklem x axis-angle). Supp. Fig. B.8'de
-         bileşenler i ∈ [0, 69) olarak çizilmiş -> global_orient Θ'ya dahil değil.
-  - S  : yüzeyden örneklenen nokta sayısı (varsayılan 1000, Sec. 4.5 / Fig. 5).
-  - J  : R^{3S x d} Jacobian, çift hassasiyette (float64) hesaplanır (Supp. B).
-  - Kasık (crotch) ve koltuk altı (armpit) bölgeleri örneklemeden çıkarılır (Sec. 3).
+Mapping to the paper:
+  - Θ  : 69-dim body_pose (23 joints x axis-angle). Supp. Fig. B.8 plots the
+         components i ∈ [0, 69) -> global_orient is NOT part of Θ.
+  - S  : number of points sampled on the surface (default 1000, Sec. 4.5 / Fig. 5).
+  - J  : R^{3S x d} Jacobian, computed in double precision (float64, Supp. B).
+  - Crotch and armpit regions are excluded from sampling (Sec. 3).
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import smplx
 
 POSE_DIM = 69  # body_pose
 
-# SMPL eklem indeksleri
+# SMPL joint indices
 PELVIS, L_HIP, R_HIP = 0, 1, 2
 L_COLLAR, R_COLLAR, L_SHOULDER, R_SHOULDER = 13, 14, 16, 17
 SPINE3 = 9
@@ -31,7 +31,7 @@ class SMPLBody(torch.nn.Module):
             p.requires_grad_(False)
         self.faces = torch.as_tensor(self.smpl.faces.astype("int64"), device=self.device)
 
-        # T-pozda yüzey alanları ve hariç tutulacak bölge maskesi
+        # Face areas in the T-pose and the mask of excluded regions
         with torch.no_grad():
             out = self.smpl(betas=torch.zeros(1, 10, device=self.device, dtype=dtype))
             v, j = out.vertices[0], out.joints[0]
@@ -45,28 +45,26 @@ class SMPLBody(torch.nn.Module):
     # ------------------------------------------------------------------ #
     @staticmethod
     def _exclusion_mask(v, j, r):
-        """Kasık ve koltuk altı yakınındaki vertexler.
-        TODO: Görsel olarak kontrol et (aitviewer'da maskeyi renklendir) ve r'yi ayarla.
-        Makale bölgelerin nasıl tanımlandığını vermiyor ([26] TUCH'a atıf yapıyor)."""
-        crotch = 0.5 * (j[L_HIP] + j[R_HIP])
-        crotch = crotch - torch.tensor([0.0, 0.06, 0.0], dtype=v.dtype, device=v.device)
-        l_arm = j[L_SHOULDER] - torch.tensor([0.0, 0.06, 0.0], dtype=v.dtype, device=v.device)
-        r_arm = j[R_SHOULDER] - torch.tensor([0.0, 0.06, 0.0], dtype=v.dtype, device=v.device)
+        """Vertices near the crotch and the armpits.
+        TODO: check visually (colour the mask in aitviewer) and tune r.
+        The paper does not define these regions; it only cites [26] (TUCH)."""
+        down = torch.tensor([0.0, 0.06, 0.0], dtype=v.dtype, device=v.device)
+        crotch = 0.5 * (j[L_HIP] + j[R_HIP]) - down
+        l_arm = j[L_SHOULDER] - down
+        r_arm = j[R_SHOULDER] - down
         centers = torch.stack([crotch, l_arm, r_arm])
         return (torch.cdist(v, centers) < r).any(-1)
 
     # ------------------------------------------------------------------ #
     def sample_surface(self, S: int, generator=None):
-        """Alan ağırlıklı uniform yüzey örneklemesi -> (face_idx (S,), bary (S,3))."""
+        """Area-weighted uniform surface sampling -> (face_idx (S,), bary (S,3)).
+        Pass the result as `sample` to points()/jacobian(). Use sample=None
+        to take all 6890 vertices instead (S = 6890, Supp. B.7)."""
         fidx = torch.multinomial(self.face_prob, S, replacement=True, generator=generator)
         u = torch.rand(S, 2, device=self.device, dtype=self.dtype, generator=generator)
         su = u[:, 0].sqrt()
         bary = torch.stack([1 - su, su * (1 - u[:, 1]), su * u[:, 1]], -1)
         return fidx, bary
-
-    def all_vertices_sample(self):
-        """S = 6890: tüm vertexler (Supp. B.7 deneyi için)."""
-        return None
 
     # ------------------------------------------------------------------ #
     def vertices(self, body_pose, betas=None, global_orient=None):
@@ -78,7 +76,7 @@ class SMPLBody(torch.nn.Module):
         return out.vertices  # (B, 6890, 3)
 
     def points(self, body_pose, sample, betas=None, global_orient=None):
-        """X(Θ): (B, S, 3). sample=None -> tüm vertexler."""
+        """X(Θ): (B, S, 3). sample=None -> all vertices."""
         v = self.vertices(body_pose, betas, global_orient)
         if sample is None:
             return v
@@ -89,22 +87,22 @@ class SMPLBody(torch.nn.Module):
     # ------------------------------------------------------------------ #
     def jacobian(self, body_pose, sample, betas=None, global_orient=None,
                  method: str = "fd", eps: float = 1e-6):
-        """J = dX/dΘ, şekil (B, 3S, 69), float64.
+        """J = dX/dΘ, shape (B, 3S, 69), float64.
 
-        method="fd"     : merkezi sonlu farklar (float64'te çok doğru, her zaman çalışır)
-        method="jacfwd" : torch.func ileri-mod AD (daha hızlı olabilir; fd ile karşılaştır!)
+        method="fd"     : central finite differences (very accurate in float64, always works)
+        method="jacfwd" : torch.func forward-mode AD (may be faster; compare it with fd!)
         """
         th = body_pose.to(self.dtype)
         B, d = th.shape
         if method == "jacfwd":
             from torch.func import jacfwd
 
-            def G(t):  # örnekler bağımsız -> toplamın Jacobian'ı blok-diyagonal bilgiyi verir
+            def G(t):  # samples are independent -> the Jacobian of the sum is block-diagonal
                 return self.points(t, sample, betas, global_orient).reshape(B, -1).sum(0)
             Jfull = jacfwd(G)(th)                    # (3S, B, d)
             return Jfull.permute(1, 0, 2).contiguous()
 
-        # sonlu farklar: B*(2d) SMPL değerlendirmesi tek batch'te
+        # finite differences: B*(2d) SMPL evaluations in a single batch
         E = torch.eye(d, device=self.device, dtype=self.dtype) * eps
         tp = (th[:, None] + E[None]).reshape(-1, d)
         tm = (th[:, None] - E[None]).reshape(-1, d)
@@ -115,7 +113,8 @@ class SMPLBody(torch.nn.Module):
 
 
 def pinv_solve(J, f, damping: float = 1e-10):
-    """dΘ = J^† f  (Denk. 5), J: (B,3S,d), f: (B,3S). Normal denklemler + küçük sönüm."""
+    """dΘ = J^† f  (Eq. 5), J: (B,3S,d), f: (B,3S).
+    Least-squares solution via the normal equations with a tiny damping term."""
     J = J.double()
     JtJ = J.transpose(1, 2) @ J
     lam = damping * JtJ.diagonal(dim1=1, dim2=2).mean(-1, keepdim=True)[..., None]

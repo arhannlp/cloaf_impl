@@ -1,15 +1,15 @@
 """
-Hareket alanı ağını AMASS üzerinde eğitme (Sec. 3, "Network Architecture and Training").
+Training the motion field network on AMASS (Sec. 3, "Network Architecture and Training").
 
-Eğitim hileleri (makalede hepsinin gerekli olduğu söyleniyor, Supp. B):
-  1. Θ(t) yerine lineer interpolasyon Θ~(t) = Θ0 + t (Θ1-Θ0) kullan
-     -> ODE çözmeye gerek kalmaz, M adımlık kümülatif toplam yeterli.
-  2. Yörünge kaybı (Denk. 9): L = 1/M Σ_m || X(Θ_{0->t_m}) - X(Θ~(t_m)) ||^2
-  3. Δt = t1 - t girdisi, çıktı ortalama beklenen hızla ölçekli.
-  4. Ardışık pozlar, Δt_max = 1.
+Training tricks (the paper says all of them are needed, Supp. B):
+  1. Use the linear interpolation Θ~(t) = Θ0 + t (Θ1-Θ0) instead of Θ(t)
+     -> no ODE solve needed, an M-step cumulative sum is enough.
+  2. Trajectory loss (Eq. 9): L = 1/M Σ_m || X(Θ_{0->t_m}) - X(Θ~(t_m)) ||^2
+  3. Input Δt = t1 - t, output scaled by the average expected speed.
+  4. Consecutive poses, Δt_max = 1.
 
-Kullanım:
-  python -m cloaf.train --smpl data/body_models --amass data/amass_smpl_30fps.npz
+Usage:
+  python -m cloaf.train --smpl data/body_models/smpl --amass data/amass_smpl_30fps.npz
 """
 import argparse
 import time
@@ -23,9 +23,9 @@ from .model import MotionField
 
 # ---------------------------------------------------------------------- #
 def prepare_amass(amass_root, out_path, target_fps=30):
-    """AMASS (SMPL+H npz) -> tek npz: body_pose (N,69), seq_id (N,).
-    AMASS 'poses' 156 boyutlu (SMPL+H): [0:3] global, [3:66] 21 gövde eklemi,
-    [66:] el eklemleri. SMPL'in 22-23 numaralı (el) eklemleri sıfır kabul edilir."""
+    """AMASS (SMPL+H npz) -> a single npz: body_pose (N,69), seq_id (N,).
+    AMASS 'poses' is 156-dim (SMPL+H): [0:3] global, [3:66] 21 body joints,
+    [66:] hand joints. SMPL joints 22-23 (hands) are set to zero."""
     import glob, os
     poses, seq = [], []
     files = sorted(glob.glob(os.path.join(amass_root, "**/*_poses.npz"), recursive=True))
@@ -39,12 +39,11 @@ def prepare_amass(amass_root, out_path, target_fps=30):
         poses.append(body.astype(np.float32))
         seq.append(np.full(len(p), i, dtype=np.int32))
     np.savez(out_path, body_pose=np.concatenate(poses), seq_id=np.concatenate(seq))
-    # TODO: makalenin split'i bilinmiyor; 3DPW ile ilgili alt kümeleri ayırma gerekmez
-    #       ama validation için birkaç alt veri setini dışarıda bırak.
+    # TODO: the paper's split is unknown; hold out a few sub-datasets for validation.
 
 
 class PairSampler:
-    """Aynı diziden (Θ0, Θ1) çiftleri; aralarındaki frame farkı 1..max_gap."""
+    """(Θ0, Θ1) pairs from the same sequence, 1..max_gap frames apart."""
     def __init__(self, path, max_gap=4, device="cuda"):
         d = np.load(path)
         self.pose = torch.as_tensor(d["body_pose"], device=device)
@@ -59,7 +58,7 @@ class PairSampler:
             ok = self.seq[i] == self.seq[i + g]
             if ok.all():
                 return self.pose[i], self.pose[i + g]
-            # basit reddetme örneklemesi
+            # simple rejection sampling: drop pairs that cross a sequence boundary
             i, g = i[ok], g[ok]
             if len(i) >= B // 2:
                 return self.pose[i], self.pose[i + g]
@@ -80,11 +79,11 @@ def trajectory_loss(body, net, th0, th1, S=1000, M=10, jac_method="fd"):
         th_lin = th0 + t * (th1 - th0)                         # Θ~(t_m)
         with torch.no_grad():
             x_lin = body.points(th_lin, sample)
-            J = body.jacobian(th_lin, sample, method=jac_method)   # ω'ya bağlı değil
+            J = body.jacobian(th_lin, sample, method=jac_method)   # does not depend on ω
         dt = torch.full((B,), 1.0 - t, device=th0.device)
         f = net(x_lin.float(), th_lin.float(), th1.float(), dt, x_target=x1)
-        dtheta = pinv_solve(J, f.reshape(B, -1))               # türevlenebilir (f üzerinden)
-        theta = theta + dtheta / M                             # Euler adımı
+        dtheta = pinv_solve(J, f.reshape(B, -1))               # differentiable through f
+        theta = theta + dtheta / M                             # Euler step
         th_lin_next = th0 + (m + 1) / M * (th1 - th0)
         x_pred = body.points(theta, sample)                    # X(Θ_{0->t_{m+1}})
         with torch.no_grad():

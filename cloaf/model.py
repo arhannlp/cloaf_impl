@@ -1,18 +1,18 @@
 """
-Hareket alanı ağı f_ω(x | Θ(t), Θ1, Δt)  (Denk. 8).
+Motion field network f_ω(x | Θ(t), Θ1, Δt)  (Eq. 8).
 
-Makaleden bilinenler:
-  - ShapeFlow [15] varyantı, 6 katmanlı MLP; son hariç her katmanın çıktısı
-    giriş vektörüyle birleştirilir (concat).
-  - Tüm girişlere Fourier features, n_f = 20 frekans.
-  - Mutlak zaman t yerine "kalan zaman" Δt = t1 - t.
-  - Çıktı, noktalar üzerinden ortalama "beklenen hız" ile ölçeklenir.
+Known from the paper:
+  - A variant of ShapeFlow [15], 6-layer MLP; the output of every layer except
+    the last is concatenated with the input vector.
+  - Fourier features on all inputs, n_f = 20 frequencies.
+  - "Time left" Δt = t1 - t instead of the absolute time t.
+  - The output is scaled by the expected speed averaged over the points.
 
-Makalede BELİRSİZ olanlar (supervisor ile konuş / varsayım olarak raporla):
-  - Gizli katman genişliği (burada 256), aktivasyon (LeakyReLU).
-  - Ağın nokta-bazlı mı yoksa tüm noktaları tek vektör olarak mı aldığı.
-    Burada ShapeFlow gibi NOKTA-BAZLI: her nokta için [FF(x_i), z] -> v_i (3),
-    z = vücut başına kod = Enc(FF(Θ(t)), FF(Θ1), FF(Δt)). Bu x'e göre Lipschitz.
+AMBIGUOUS in the paper (discuss with the supervisor / report as assumptions):
+  - Hidden width (256 here) and activation (LeakyReLU).
+  - Whether the network is per-point or takes all points as one vector.
+    Here it is PER-POINT like ShapeFlow: for each point [FF(x_i), z] -> v_i (3),
+    with a per-body code z = Enc(FF(Θ(t)), FF(Θ1), FF(Δt)). This is Lipschitz in x.
 """
 import math
 import torch
@@ -33,7 +33,7 @@ class FourierFeatures(nn.Module):
 
 
 class DenseConcatMLP(nn.Module):
-    """6 katman; her gizli katman çıktısı girişle concat edilir (ShapeFlow ImNet tarzı)."""
+    """6 layers; every hidden output is concatenated with the input (ShapeFlow ImNet style)."""
     def __init__(self, d_in, d_out, hidden=256, n_layers=6):
         super().__init__()
         self.layers = nn.ModuleList()
@@ -63,17 +63,17 @@ class MotionField(nn.Module):
 
     def forward(self, x, theta_t, theta_1, dt, x_target=None):
         """
-        x        : (B,S,3) mevcut noktalar X(Θ(t))
-        theta_t  : (B,69), theta_1 : (B,69), dt : (B,) kalan zaman
-        x_target : (B,S,3) X(Θ1) -> hız ölçeği için
-        dönüş    : (B,S,3) hızlar dX/dt
+        x        : (B,S,3) current points X(Θ(t))
+        theta_t  : (B,69), theta_1 : (B,69), dt : (B,) time left
+        x_target : (B,S,3) X(Θ1) -> used for the speed scale
+        returns  : (B,S,3) velocities dX/dt
         """
         B, S, _ = x.shape
         z = self.body_enc(self.ff(torch.cat([theta_t, theta_1, dt[:, None]], -1)))
         h = torch.cat([self.ff(x), z[:, None].expand(B, S, -1)], -1)
         v = self.point_net(h)
         if x_target is not None:
-            # "beklenen hız": kalan mesafe / kalan zaman, noktalar üzerinden ortalama
+            # "expected speed": remaining distance / remaining time, averaged over points
             speed = (x_target - x).norm(dim=-1).mean(-1) / dt.clamp_min(1e-3)   # (B,)
             v = v * speed[:, None, None]
         return v

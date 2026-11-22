@@ -1,10 +1,10 @@
 """
-CLOAF entegrasyonu (Denk. 6):   dΘ/dt = J^† f(X(Θ), t | Θ0, Θ1),   Θ(t0) = Θ0
+CLOAF integration (Eq. 6):   dΘ/dt = J^† f(X(Θ), t | Θ0, Θ1),   Θ(t0) = Θ0
 
-- Öğrenilmiş alan  : MotionField (model.py)
-- Basit alan (4.4) : TargetField + Bézier blending (Denk. 10-11, Supp. C.14)
-- Dizi düzeltme    : "successive frames" (Sec. 4.2) ve uzantı olarak
-                     "colliding_only" (WS proje önerisi)
+- Learned field     : MotionField (model.py)
+- Simple field (4.4): TargetField + Bézier blending (Eq. 10-11, Supp. C.14)
+- Sequence correction: "successive frames" (Sec. 4.2) and, as an extension,
+                       "colliding_only" (from the project proposal)
 """
 from __future__ import annotations
 
@@ -16,10 +16,10 @@ from .collision import count_collisions
 
 
 # ====================================================================== #
-#                           ODE sağ tarafı                                #
+#                         Right-hand side of the ODE                      #
 # ====================================================================== #
 class CLOAFODE(torch.nn.Module):
-    """Θ uzayında hız: J^† f. torchdiffeq.odeint ile çözülür."""
+    """Velocity in Θ space: J^† f. Solved with torchdiffeq.odeint."""
 
     def __init__(self, body: SMPLBody, field, theta_1, sample, betas=None,
                  global_orient=None, t1: float = 1.0, jac_method="fd"):
@@ -27,24 +27,25 @@ class CLOAFODE(torch.nn.Module):
         self.body, self.field, self.sample = body, field, sample
         self.theta_1, self.betas, self.go, self.t1 = theta_1, betas, global_orient, t1
         self.jac_method = jac_method
-        self.nfe = 0
+        self.nfe = 0  # number of function evaluations (solver steps)
         with torch.no_grad():
             self.x_1 = body.points(theta_1, sample, betas, global_orient)
 
     def forward(self, t, theta):
         self.nfe += 1
-        x = self.body.points(theta, self.sample, self.betas, self.go)
+        x = self.body.points(theta, self.sample, self.betas, self.go)            # [Sampling]
         J = self.body.jacobian(theta, self.sample, self.betas, self.go, method=self.jac_method)
         dt = (self.t1 - t).expand(theta.shape[0]).to(theta)
         f = self.field(x.float(), theta.float(), self.theta_1.float(), dt.float(),
-                       x_target=self.x_1.float())                     # (B,S,3)
-        return pinv_solve(J, f.reshape(f.shape[0], -1))              # (B,69)
+                       x_target=self.x_1.float())                               # [Field velocities]
+        return pinv_solve(J, f.reshape(f.shape[0], -1))                         # [Parametric correction]
 
 
 @torch.no_grad()
 def cloaf_solve(body, field, theta_0, theta_1, S=1000, betas=None, global_orient=None,
                 method="dopri5", rtol=1e-4, atol=1e-5, n_out=2, seed=0, **kw):
-    """Θ0 (çakışmasız) -> Θ1 hedefe entegre et. Dönüş: (n_out, B, 69) yörünge."""
+    """Integrate from Θ0 (collision-free) towards the target Θ1.
+    Returns the trajectory (n_out, B, 69) and the number of solver evaluations."""
     g = torch.Generator(device=body.device).manual_seed(seed)
     sample = body.sample_surface(S, generator=g)
     ode = CLOAFODE(body, field, theta_1.to(body.dtype), sample, betas, global_orient, **kw)
@@ -54,19 +55,19 @@ def cloaf_solve(body, field, theta_0, theta_1, S=1000, betas=None, global_orient
 
 
 # ====================================================================== #
-#                 Basit (elle tanımlı) alan — Sec. 4.4 / Supp. C           #
+#              Simple (hand-crafted) field — Sec. 4.4 / Supp. C            #
 # ====================================================================== #
 def bezier_blend(r, r_in, r_out, alphas=(0, 0, 0, 1, 1)):
-    """Denk. 10: b(r) = Σ α_p B_p^4((r-r_in)/(r_out-r_in))."""
+    """Eq. 10: b(r) = Σ α_p B_p^4((r-r_in)/(r_out-r_in))."""
     from math import comb
     u = ((r - r_in) / (r_out - r_in)).clamp(0, 1)
     return sum(a * comb(4, p) * u ** p * (1 - u) ** (4 - p) for p, a in enumerate(alphas))
 
 
 class TargetField(torch.nn.Module):
-    """f(x) = F (x_T - x) / (||x_T - x|| + eps)  kaynak bölgede, dışarıda blend ile 0.
+    """f(x) = F (x_T - x) / (||x_T - x|| + eps) in the source region, blended to 0 outside.
     r_in = 10 mm, r_out = 30 mm, F = 1e-3, eps = 1e-6 (Supp. C).
-    Opsiyonel: eksen hizalı kutu engel -> kutu içinde alan 0 (Fig. 4)."""
+    Optional axis-aligned box obstacle -> zero field inside the box (Fig. 4)."""
 
     def __init__(self, body, region_vert_mask, target_point, F=1e-3, eps=1e-6,
                  r_in=0.010, r_out=0.030, box=None):
@@ -77,12 +78,12 @@ class TargetField(torch.nn.Module):
     def forward(self, x, theta_t, theta_1, dt, x_target=None):
         verts = self.body.vertices(theta_t.to(self.body.dtype)).float()   # (B,V,3)
         region = verts[:, self.mask]                                      # (B,R,3)
-        r = torch.cdist(x, region).min(-1).values                         # (B,S)
+        r = torch.cdist(x, region).min(-1).values                         # (B,S) distance to region
         b = bezier_blend(r, self.r_in, self.r_out)
         d = self.xT.to(x) - x
         f = self.F * d / (d.norm(dim=-1, keepdim=True) + self.eps)
-        f = f * (1 - b)[..., None]                                        # Denk. 11
-        if self.box is not None:                                          # engel
+        f = f * (1 - b)[..., None]                                        # Eq. 11
+        if self.box is not None:                                          # obstacle
             lo, hi = (t.to(x) for t in self.box)
             dist_out = (torch.maximum(lo - x, x - hi)).clamp_min(0).norm(dim=-1)
             f = f * bezier_blend(dist_out, 0.0, self.r_out - self.r_in)[..., None]
@@ -90,16 +91,16 @@ class TargetField(torch.nn.Module):
 
 
 # ====================================================================== #
-#                     Dizi (video) düzeltme                                #
+#                      Sequence (video) correction                         #
 # ====================================================================== #
 @torch.no_grad()
 def correct_sequence(body, field, poses, betas=None, global_orient=None,
                      mode="all", init_strategy="jitter", S=1000, **solve_kw):
     """
-    poses : (N,69) tahmin edilen (çakışmalı olabilir) pozlar
-    mode  : "all"            -> makale: her frame Θ0=önceki düzeltilmiş, Θ1=tahmin
-            "colliding_only" -> uzantı: çakışmasız frame'ler olduğu gibi kalır
-    Dönüş : (N,69) düzeltilmiş pozlar, (N,) düzeltme öncesi çakışma sayıları
+    poses : (N,69) estimated poses (may contain collisions)
+    mode  : "all"            -> paper: every frame, Θ0 = previous corrected, Θ1 = estimate
+            "colliding_only" -> extension: collision-free frames are kept unchanged
+    Returns: (N,69) corrected poses, (N,) collision counts before correction
     """
     N = poses.shape[0]
     sel = lambda x, i: None if x is None else x[i:i + 1]
@@ -107,7 +108,7 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
     counts = count_collisions(verts, body.faces)
     out = poses.clone().to(body.dtype)
 
-    # --- ilk frame ---
+    # --- first frame ---
     if counts[0] > 0:
         out[0] = find_initial_pose(body, poses[0:1], sel(betas, 0), sel(global_orient, 0),
                                    strategy=init_strategy)[0]
@@ -116,9 +117,9 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
 
     for k in range(1, N):
         if mode == "colliding_only" and counts[k] == 0:
-            continue                                    # orijinal frame korunur
+            continue                                    # keep the original frame
         theta_0 = out[k - 1:k]
-        # Θ0'ı hedef frame'in betas/orient'i ile kontrol et (şekil değişebilir!)
+        # Re-check Θ0 with the target frame's betas/orient (the shape may change!)
         v0 = body.vertices(theta_0, sel(betas, k), sel(global_orient, k))
         if count_collisions(v0, body.faces)[0] > 0:
             theta_0 = find_initial_pose(body, theta_0, sel(betas, k), sel(global_orient, k),
@@ -130,17 +131,17 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
 
 
 # ====================================================================== #
-#                 Başlangıç pozu: Jitter (Sec. 4.5)                        #
+#                  Initial pose: Jitter (Sec. 4.5)                         #
 # ====================================================================== #
 @torch.no_grad()
 def find_initial_pose(body, theta, betas=None, global_orient=None, strategy="jitter",
                       sigma0=0.05, max_iter=200, keyposes=None):
-    """Çakışmasız bir Θ0 bul.
-    jitter  : çakışan vertexlerin bağlı olduğu eklemlere gürültü ekle, σ'yı artır.
-    keypose : AMASS K-means anahtar pozlarından en yakını (K=128) -> keyposes (K,69)."""
+    """Find a collision-free Θ0.
+    jitter  : add noise to the joints driving the colliding vertices, increase σ over time.
+    keypose : nearest of the AMASS K-means key poses (K=128) -> keyposes (K,69)."""
     if strategy == "keypose":
         assert keyposes is not None
-        d = (keyposes - theta).norm(dim=-1)   # TODO: makale keypoint mesafesi kullanıyor
+        d = (keyposes - theta).norm(dim=-1)   # TODO: the paper uses keypoint distance
         return keyposes[d.argmin()][None].to(theta)
 
     from .collision import inside_vertices
@@ -152,12 +153,12 @@ def find_initial_pose(body, theta, betas=None, global_orient=None, strategy="jit
         m = inside_vertices(v, body.faces)
         if m.sum() == 0:
             return th
-        joints = W[m].sum(0).topk(4).indices            # sorumlu eklemler
-        joints = joints[joints > 0] - 1                 # body_pose indeksine çevir (pelvis hariç)
+        joints = W[m].sum(0).topk(4).indices            # joints responsible for the collision
+        joints = joints[joints > 0] - 1                 # convert to body_pose index (no pelvis)
         cand = theta.clone().to(body.dtype)
         for j in joints.tolist():
             cand[0, 3 * j:3 * j + 3] += sigma * torch.randn(3, device=th.device, dtype=th.dtype)
         th = cand
         if it % 20 == 19:
             sigma *= 1.5
-    raise RuntimeError("Jitter çakışmasız poz bulamadı")
+    raise RuntimeError("Jitter could not find a collision-free pose")
