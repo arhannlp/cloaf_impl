@@ -122,7 +122,7 @@ class SMPLBody(torch.nn.Module):
 
     # ------------------------------------------------------------------ #
     def jacobian(self, body_pose, sample, betas=None, global_orient=None,
-                 method: str = "fd", eps: float = 1e-6):
+                 method: str = "fd", eps: float = None):
         """J = dX/dΘ, shape (B, 3S, 69), float64.
 
         method="fd"     : central finite differences (very accurate in float64, always works)
@@ -130,13 +130,18 @@ class SMPLBody(torch.nn.Module):
         """
         th = body_pose.to(self.dtype)
         B, d = th.shape
+        if eps is None:
+            eps = 1e-6 if self.dtype == torch.float64 else 1e-3
         if method == "jacfwd":
-            from torch.func import jacfwd
+            # per-sample forward-mode AD, vectorised over the batch: cost O(B * d)
+            from torch.func import jacfwd, vmap
+            bt = torch.zeros(B, 10, device=self.device, dtype=self.dtype) if betas is None else betas.to(self.dtype)
+            go = (torch.zeros(B, 3, device=self.device, dtype=self.dtype) if global_orient is None
+                  else global_orient.to(self.dtype))
 
-            def G(t):  # samples are independent -> the Jacobian of the sum is block-diagonal
-                return self.points(t, sample, betas, global_orient).reshape(B, -1).sum(0)
-            Jfull = jacfwd(G)(th)                    # (3S, B, d)
-            return Jfull.permute(1, 0, 2).contiguous()
+            def f(t, b, g):
+                return self.points(t[None], sample, b[None], g[None])[0].reshape(-1)
+            return vmap(jacfwd(f, argnums=0))(th, bt, go)   # (B, 3S, d)
 
         # finite differences: B*(2d) SMPL evaluations in a single batch
         E = torch.eye(d, device=self.device, dtype=self.dtype) * eps

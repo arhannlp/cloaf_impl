@@ -121,13 +121,23 @@ def main():
     ap.add_argument("--minutes", type=float, default=None,
                     help="stop after this many minutes and save (time budget)")
     ap.add_argument("--max_gap", type=int, default=4, help="max frame gap between Θ0 and Θ1")
+    ap.add_argument("--precision", default="float32", choices=["float32", "float64"],
+                    help="SMPL/Jacobian precision during training. The paper uses float64, but on a "
+                         "T4 float64 is ~30x slower; float32 + forward-mode AD is accurate enough here")
+    ap.add_argument("--jac", default=None, choices=["fd", "jacfwd"],
+                    help="Jacobian method (default: jacfwd for float32, fd for float64)")
     ap.add_argument("--resume", action="store_true",
                     help="continue from <out>.state (network, optimizer, iteration)")
     a = ap.parse_args()
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     state_path, log_path = a.out + ".state", a.out + ".log.csv"
 
-    body = SMPLBody(a.smpl, device=a.device)
+    dtype = torch.float32 if a.precision == "float32" else torch.float64
+    jac = a.jac or ("jacfwd" if a.precision == "float32" else "fd")
+    if a.precision == "float32" and jac == "fd":
+        print("warning: finite differences in float32 are inaccurate; use --jac jacfwd")
+    body = SMPLBody(a.smpl, device=a.device, dtype=dtype)
+    print(f"training with {a.precision}, Jacobian: {jac}, batch {a.batch}, M {a.M}, S {a.S}", flush=True)
     net = MotionField().to(a.device)
     opt = torch.optim.Adam(net.parameters(), lr=a.lr)
     sampler = PairSampler(a.amass, max_gap=a.max_gap, device=a.device)
@@ -151,12 +161,15 @@ def main():
     it = start
     for it in range(start, a.iters):
         th0, th1 = sampler(a.batch)
-        loss = trajectory_loss(body, net, th0, th1, a.S, a.M)
+        loss = trajectory_loss(body, net, th0, th1, a.S, a.M, jac_method=jac)
         opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
         opt.step()
         running.append(loss.item())
+        if it - start < 100 and it % 10 == 0 and it > start:
+            print(f"it {it:6d}  loss {loss.item():.3e}  ({time.time() - t0:.0f}s, "
+                  f"{(time.time() - t0) / (it - start):.2f} s/it)", flush=True)
         if it % 100 == 0:
             avg = sum(running) / len(running)
             running = []
