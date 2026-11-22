@@ -27,7 +27,7 @@ class SMPLBody(torch.nn.Module):
     def __init__(self, model_path: str, gender: str = "neutral",
                  device="cuda", dtype=torch.float64, exclude_radius: float = 0.07,
                  collision_mode: str = "parts", ignore_rest_collisions: bool = True,
-                 ignore_excluded_regions: bool = True):
+                 ignore_excluded_regions: bool = True, collision_min: int = 0):
         super().__init__()
         self.device, self.dtype = torch.device(device), dtype
         self.smpl = smplx.SMPL(model_path, gender=gender).to(self.device, dtype)
@@ -49,6 +49,10 @@ class SMPLBody(torch.nn.Module):
         # Collision test (see collision.py): "parts" ignores contact between adjacent
         # body parts; "full" counts every vertex inside the body.
         self.collision_mode = collision_mode
+        # A pose counts as colliding only with MORE than collision_min colliding vertices.
+        # 0 = any penetration (paper's Col.Rate@0). A small value (e.g. 20) tolerates the
+        # light hand-body contact that clean mocap has in ~30 % of frames.
+        self.collision_min = collision_min
         self._part_test = (PartCollisionTest(self.smpl.lbs_weights, self.faces)
                            if collision_mode == "parts" else None)
         # Ignored when counting: vertices the test already flags in the rest pose

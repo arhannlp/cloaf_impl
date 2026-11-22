@@ -151,7 +151,7 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
     stats = {"previous frame": 0, "last free pose": 0, "jitter": 0, "skipped": 0}
 
     def collides(theta, k):
-        return body.count_collisions(body.vertices(theta, sel(betas, k), sel(global_orient, k)))[0] > 0
+        return body.count_collisions(body.vertices(theta, sel(betas, k), sel(global_orient, k)))[0] > body.collision_min
 
     def start_pose(candidate, k):
         """Collision-free Θ0 for frame k, cheapest option first:
@@ -176,10 +176,10 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
     for k in range(N):
         if progress and k % 10 == 0:
             print(f"  frame {k}/{N} ({time.time() - t_start:.0f} s)", flush=True)
-        if mode == "colliding_only" and counts[k] == 0:
+        if mode == "colliding_only" and counts[k] <= body.collision_min:
             last_free = out[k:k + 1].clone()          # keep the original frame
             continue
-        if k == 0 and counts[0] == 0:
+        if k == 0 and counts[0] <= body.collision_min:
             last_free = out[0:1].clone()              # nothing to correct, start from here
             continue
         # Θ0 = previous output; re-check it with this frame's betas/orient (the shape may change!)

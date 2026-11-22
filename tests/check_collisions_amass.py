@@ -40,7 +40,7 @@ def main():
     pick = rng.choice(len(P), size=min(a.frames, len(P)), replace=False)
     poses = torch.as_tensor(P[pick])
     print(f"{len(pick)} random frames from {a.amass}\n")
-    print(f"{'configuration':42s} {'Col@0':>7s} {'Col@100':>8s} {'mean':>7s} {'s/frame':>8s}")
+    print(f"{'configuration':42s} {'@0':>6s} {'@10':>6s} {'@20':>6s} {'@50':>6s} {'@100':>6s} {'mean':>6s} {'s/frame':>8s}")
     for name, kw in CONFIGS:
         body = SMPLBody(a.smpl, device=a.device, **kw)
         t = time.time()
@@ -54,8 +54,8 @@ def main():
                     parts += torch.bincount(body._part_test.vertex_part[m], minlength=len(PART_NAMES)).cpu()
         dt = (time.time() - t) / len(poses)
         c = torch.tensor(counts)
-        print(f"{name:42s} {collision_rate(c, 0):6.1f}% {collision_rate(c, 100):7.1f}% "
-              f"{c.float().mean():7.1f} {dt:8.2f}")
+        rates = " ".join(f"{collision_rate(c, C):5.1f}%" for C in (0, 10, 20, 50, 100))
+        print(f"{name:42s} {rates} {c.float().mean():6.1f} {dt:8.2f}")
         if parts.sum() > 0:
             top = sorted(((int(n), PART_NAMES[k]) for k, n in enumerate(parts) if n > 0), reverse=True)[:6]
             print(f"{'':42s} colliding vertices by part: " + ", ".join(f"{p} {n}" for n, p in top))

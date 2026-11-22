@@ -43,18 +43,43 @@ Our time does not grow with S because we compute the Jacobian with central finit
 Hand-to-target distance shrinks from 0.474 m to 0.225 m (T = 400; longer T would reach the target), so the ODE + Jacobian + J^† chain works.
 Colliding vertices grow from 0 to 7 while the arm is raised. Only the hand region has a non-zero velocity; the rest of the arm follows through the least-squares projection J^†, and the armpit (excluded from sampling) has no points to constrain it. This is a concrete case where the non-intersection guarantee holds only approximately after the projection onto SMPL.
 
-## 3. Training
+## 3. Collision detection on clean motion
 
-- Data: AMASS subset ______, ____ frames at 30 fps
-- Hardware and time: ______ GPU, ____ h, ____ iterations
+The paper does not say how self-intersections are counted. On 200 random clean AMASS (ACCAD) frames:
+
+| Test | Col@0 | Col@100 | Mean colliding vertices |
+|---|---|---|---|
+| Full mesh (vertex inside the body), rest-pose vertices ignored | 100 % | 66.0 % | 149.8 |
+| Full mesh, + crotch/armpit ignored | 100 % | 32.5 % | 96.4 |
+| Non-adjacent parts only, rest-pose vertices ignored | 38.5 % | 4.5 % | 22.5 |
+| **Non-adjacent parts only, + crotch/armpit ignored (used)** | **30.0 %** | **4.5 %** | **21.2** |
+
+- Counting every vertex inside the body flags every clean frame: adjacent parts (upper arm against torso, forearm against upper arm) always overlap slightly in SMPL. We therefore count only vertices inside a non-adjacent body part, as SMPLify-X / TUCH do.
+- The remaining hits on clean mocap are mostly hands (r_hand 2054, l_hand 1519 vertices over 200 frames): hands resting on the body. AMASS finger poses are dropped when converting SMPL+H to SMPL, so the hands are flat and sink slightly into the surface they touch.
+- Col@0 is therefore very sensitive to light contact: 30 % on clean mocap, the same order as the paper's 39.2 % for HMR2.0 on 3DPW. Deep penetrations (Col@100) are rare on clean mocap (4.5 %).
+- For sequence correction we treat a frame as colliding only above a small threshold (`collision_min`, default 20 vertices).
+
+## 4. Training
+
+- Data: AMASS ACCAD, ~48k frames at 30 fps; test sequences from SFU (not used for training)
+- Hardware: Colab T4 GPU. float32 with forward-mode AD for the Jacobian (the paper uses float64; on a T4 float64 was 5x slower: 6.6 vs 1.34 s/iteration)
+- Settings the paper does not give, chosen here: hidden width 256, LeakyReLU, per-point network, batch 16, M = 10 Euler steps, frame gap 1–4, lr 1e-4 for 2000 iterations, then 3e-4
 - Loss curve: (insert plot)
-- Settings that the paper does not give and I chose: hidden width 256, LeakyReLU, per-point network, lr 1e-4, batch 16, M = 10, frame gap 1–4.
 
-## 4. Results on motion sequences with injected self-intersections
+Loss compared with two reference fields on the same pose pairs (`scripts/loss_reference.py`):
+
+| Field | Loss after 2000 iterations | vs zero field |
+|---|---|---|
+| Zero field (body does not move) | 9.9e-4 | 1.00x |
+| **Network** | **5.5e-4** | **0.56x** |
+| Point target (each point straight to its target) | 5.9e-5 | 0.06x |
+| Network, end of training | | |
+
+## 5. Results on motion sequences with injected self-intersections
 
 Collisions were injected by smoothly rotating one shoulder into the torso over 30 frames of clean AMASS motion, so the clean motion is known.
 
-(paste `results/summary.csv`)
+(paste `results/summary_runs.csv`)
 
 | Sequence | Field | Mode | Colliding frames before → after | Dist. to clean (mm) input → CLOAF | Max jerk input → CLOAF |
 |---|---|---|---|---|---|
@@ -63,20 +88,20 @@ Collisions were injected by smoothly rotating one shoulder into the torso over 3
 | | network | all | | | |
 | | network | colliding_only | | | |
 
-## 5. Observations from the animations
+## 6. Observations from the animations
 
 - Which intersections are corrected:
 - Where the movement changes in an undesirable way:
 - `all` vs `colliding_only`: what happens at the transitions:
 - (screenshots)
 
-## 6. Limitations and open questions
+## 7. Limitations and open questions
 
 - The network was trained for hours on one AMASS subset; the paper trained on all of AMASS on an A100.
 - The guarantee is approximate: velocities are projected onto SMPL with J^† (least squares).
 - Details the paper does not specify (see README, "Ambiguities"): collision detection, network size, training settings, crotch/armpit mask.
 
-## 7. Next steps
+## 8. Next steps
 
 1. Run HMR2.0 on 3DPW-test; calibrate the collision detector against Table 1 (HMR2.0 Col@0 = 39.2 %).
 2. CLOAF on 3DPW: reproduce Table 2 (82.3 / 53.2 / 9.4 / 0.0 %) and Table 4.

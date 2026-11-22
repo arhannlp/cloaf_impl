@@ -117,10 +117,13 @@ def main():
     ap.add_argument("--solver", default="rk4", choices=["rk4", "dopri5"],
                     help="rk4 = fixed 10 steps (fast); dopri5 = paper's adaptive solver (slow)")
     ap.add_argument("--S", type=int, default=1000)
+    ap.add_argument("--collision_min", type=int, default=20,
+                    help="a frame collides if MORE than this many vertices collide (0 = paper's @0); "
+                         "20 tolerates light hand-body contact that clean mocap has")
     ap.add_argument("--out", default="results/sequence.npz")
     a = ap.parse_args()
 
-    body = SMPLBody(a.smpl, device=a.device)
+    body = SMPLBody(a.smpl, device=a.device, collision_min=a.collision_min)
     bp, go = load_sequence(a.seq, a.fps, a.start, a.frames)
     clean = torch.as_tensor(bp, device=body.device, dtype=body.dtype)
     go = torch.as_tensor(go, device=body.device, dtype=body.dtype)
@@ -143,10 +146,12 @@ def main():
         after = body.count_collisions(body.vertices(out, None, go))
 
     n = len(inp)
-    col_frames = before > 0
+    C = a.collision_min
+    col_frames = before > C
     shift = vertex_dist_mm(body, out, inp, go)
     print(f"\n{n} frames, {secs:.0f} s ({secs / n:.2f} s/frame), mode={a.mode}, solver={a.solver}")
-    print(f"frames with collisions : before {int(col_frames.sum())}/{n}, after {int((after > 0).sum())}/{n}")
+    print(f"frames with collisions : before {int(col_frames.sum())}/{n}, after {int((after > C).sum())}/{n}"
+          f"  (more than {C} colliding vertices)")
     print(f"colliding vertices     : before {int(before.sum())}, after {int(after.sum())} (sum over frames)")
     print(f"vertex shift vs input  : colliding frames {shift[col_frames].mean():.1f} mm, "
           f"clean frames {shift[~col_frames].mean():.1f} mm")
@@ -159,16 +164,16 @@ def main():
     jerk = {k: jerk_mm(body, p, go) for k, p in [("clean", clean), ("input", inp), ("cloaf", out)]}
     print("jerk mean / max (mm)   : " + ", ".join(f"{k} {m:.2f} / {x:.2f}" for k, (m, x) in jerk.items()))
 
-    # one row per run -> results/summary.csv, easy to paste into the report
-    summary = Path(a.out).parent / "summary.csv"
+    # one row per run -> results/summary_runs.csv, easy to paste into the report
+    summary = Path(a.out).parent / "summary_runs.csv"
     new = not summary.exists()
     with open(summary, "a") as fh:
         if new:
-            fh.write("sequence,mode,solver,frames,col_frames_before,col_frames_after,col_verts_before,"
+            fh.write("sequence,mode,solver,collision_min,frames,col_frames_before,col_frames_after,col_verts_before,"
                      "col_verts_after,shift_colliding_mm,shift_clean_mm,dist_clean_input_mm,"
                      "dist_clean_cloaf_mm,jerk_max_input,jerk_max_cloaf,sec_per_frame\n")
-        fh.write(f"{Path(a.seq).stem}[{Path(a.field).stem}],{a.mode},{a.solver},{n},{int(col_frames.sum())},"
-                 f"{int((after > 0).sum())},{int(before.sum())},{int(after.sum())},"
+        fh.write(f"{Path(a.seq).stem}[{Path(a.field).stem}],{a.mode},{a.solver},{C},{n},{int(col_frames.sum())},"
+                 f"{int((after > C).sum())},{int(before.sum())},{int(after.sum())},"
                  f"{shift[col_frames].mean():.1f},{shift[~col_frames].mean():.1f},{d_in:.1f},{d_out:.1f},"
                  f"{jerk['input'][1]:.2f},{jerk['cloaf'][1]:.2f},{secs / n:.2f}\n")
     print(f"appended a row to {summary}")

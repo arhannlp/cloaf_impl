@@ -90,7 +90,7 @@ The network has learned something only if its loss is clearly below the zero fie
 ## Phase 6: final runs (finish by 08:30)
 
 - [ ] **Step 6** with the final checkpoint: 3 sequences × 2 modes.
-- [ ] **Step 7:** copy the table (`cloaf_data/results/summary.csv`) into the report.
+- [ ] **Step 7:** copy the table (`cloaf_data/results/summary_runs.csv`) into the report.
 
 ## Phase 7: animations (finish by 09:30)
 
