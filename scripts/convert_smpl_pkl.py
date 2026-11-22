@@ -15,12 +15,13 @@ Result: data/body_models/smpl/SMPL_NEUTRAL.pkl, SMPL_MALE.pkl, SMPL_FEMALE.pkl
 import argparse
 import io
 import pickle
+import re
 import zipfile
 from pathlib import Path
 
 import numpy as np
 
-NAMES = {"neutral": "SMPL_NEUTRAL.pkl", "_m_": "SMPL_MALE.pkl", "_f_": "SMPL_FEMALE.pkl"}
+NAMES = ("SMPL_NEUTRAL.pkl", "SMPL_MALE.pkl", "SMPL_FEMALE.pkl")
 
 
 class _ChumpyStub:
@@ -68,17 +69,52 @@ def convert(raw: bytes):
     return {k: _to_array(k, v) for k, v in data.items()}
 
 
-def find_models(src: Path):
-    """Yield (filename, bytes) of every SMPL model .pkl inside a zip or a folder."""
+def _gender(name: str):
+    """SMPL_NEUTRAL / SMPL_MALE / SMPL_FEMALE from a file name, or None."""
+    n = Path(name).stem.lower()
+    tokens = set(re.split(r"[^a-z0-9]+", n))
+    if "neutral" in tokens or "neutral" in n:
+        return "SMPL_NEUTRAL.pkl"
+    if tokens & {"f", "female"} or "female" in n:
+        return "SMPL_FEMALE.pkl"
+    if tokens & {"m", "male"} or "male" in n:
+        return "SMPL_MALE.pkl"
+    return None
+
+
+def _usable(name: str):
+    base = Path(name).name
+    return (base.lower().endswith((".pkl", ".npz")) and "__MACOSX" not in name
+            and not base.startswith("._"))
+
+
+def find_models(src: Path, listing: list):
+    """Yield (filename, bytes) of every model file (.pkl/.npz) inside a zip
+    (also nested zips) or a folder. All entries seen are appended to `listing`."""
+    def from_zip(z):
+        for n in z.namelist():
+            listing.append(n)
+            if n.lower().endswith(".zip"):
+                with zipfile.ZipFile(io.BytesIO(z.read(n))) as inner:
+                    yield from from_zip(inner)
+            elif _usable(n):
+                yield Path(n).name, z.read(n)
+
     if src.suffix == ".zip":
         with zipfile.ZipFile(src) as z:
-            for n in z.namelist():
-                if n.endswith(".pkl") and "basicmodel" in Path(n).name.lower():
-                    yield Path(n).name, z.read(n)
+            yield from from_zip(z)
     else:
-        for p in src.rglob("*.pkl"):
-            if "basicmodel" in p.name.lower():
+        for p in sorted(src.rglob("*")):
+            listing.append(str(p))
+            if p.is_file() and _usable(p.name):
                 yield p.name, p.read_bytes()
+
+
+def load_any(name: str, raw: bytes):
+    if name.lower().endswith(".npz"):
+        d = np.load(io.BytesIO(raw), allow_pickle=True)
+        return {k: d[k] for k in d.files}
+    return convert(raw)
 
 
 def main():
@@ -93,11 +129,16 @@ def main():
     src = Path(a.src)
     if not src.exists():
         raise SystemExit(f"not found: {src}  (check the folder and file name in Google Drive)")
-    for name, raw in find_models(src):
-        target = next((v for k, v in NAMES.items() if k in name.lower()), None)
+    listing = []
+    for name, raw in find_models(src, listing):
+        target = _gender(name)
         if target is None:
+            print(f"skipping {name} (cannot tell neutral/male/female from the name)")
             continue
-        model = convert(raw)
+        model = load_any(name, raw)
+        if "v_template" not in model or "weights" not in model:
+            print(f"skipping {name} (not an SMPL model: keys {sorted(model)[:8]})")
+            continue
         with open(out / target, "wb") as fh:
             pickle.dump(model, fh, protocol=2)
         shapes = {k: getattr(v, "shape", type(v).__name__) for k, v in model.items()
@@ -105,8 +146,11 @@ def main():
         print(f"{name} -> {out / target}  {shapes}")
         done.append(target)
     if not done:
-        raise SystemExit(f"no basicmodel_*.pkl found in {a.src}; is this SMPL_python_v.1.1.0?")
-    missing = set(NAMES.values()) - set(done)
+        print(f"no SMPL model file found in {a.src}. Its contents:")
+        for n in listing[:80]:
+            print("   ", n)
+        raise SystemExit("send this list so the converter can be adapted")
+    missing = set(NAMES) - set(done)
     if missing:
         print("warning: missing", sorted(missing))
     print("next: python tests/check_smpl.py --smpl", out)
