@@ -148,21 +148,28 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
     out = poses.clone().to(body.dtype)
     last_free = None          # most recent output pose known to be collision-free
     skipped = []
+    stats = {"previous frame": 0, "last free pose": 0, "jitter": 0, "skipped": 0}
 
     def collides(theta, k):
         return body.count_collisions(body.vertices(theta, sel(betas, k), sel(global_orient, k)))[0] > 0
 
     def start_pose(candidate, k):
-        """Collision-free Θ0 for frame k: candidate, else jitter, else last free pose."""
+        """Collision-free Θ0 for frame k, cheapest option first:
+        previous output -> last collision-free output -> a short jitter search."""
         if candidate is not None and not collides(candidate, k):
+            stats["previous frame"] += 1
             return candidate
+        if last_free is not None and not collides(last_free, k):
+            stats["last free pose"] += 1
+            return last_free
         try:
-            return find_initial_pose(body, candidate if candidate is not None else poses[k:k + 1],
-                                     sel(betas, k), sel(global_orient, k), strategy=init_strategy)
+            th = find_initial_pose(body, candidate if candidate is not None else poses[k:k + 1],
+                                   sel(betas, k), sel(global_orient, k), strategy=init_strategy,
+                                   max_iter=20)
+            stats["jitter"] += 1
+            return th
         except RuntimeError:
-            if last_free is not None and not collides(last_free, k):
-                return last_free
-        return None
+            return None
 
     import time
     t_start = time.time()
@@ -179,12 +186,15 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
         theta_0 = start_pose(out[k - 1:k] if k > 0 else poses[0:1], k)
         if theta_0 is None:                           # no collision-free start: leave frame as is
             skipped.append(k)
+            stats["skipped"] += 1
             continue
         traj, _ = cloaf_solve(body, field, theta_0, poses[k:k + 1], S,
                               sel(betas, k), sel(global_orient, k), **solve_kw)
         out[k] = traj[-1, 0]
         if not collides(out[k:k + 1], k):
             last_free = out[k:k + 1].clone()
+    if progress:
+        print(f"  start pose used: {stats}", flush=True)
     if skipped:
         print(f"warning: no collision-free start pose for {len(skipped)} frame(s), "
               f"left unchanged: {skipped[:10]}{' ...' if len(skipped) > 10 else ''}")
@@ -196,7 +206,7 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
 # ====================================================================== #
 @torch.no_grad()
 def find_initial_pose(body, theta, betas=None, global_orient=None, strategy="jitter",
-                      sigma0=0.05, max_iter=200, keyposes=None):
+                      sigma0=0.05, max_iter=20, keyposes=None):
     """Find a collision-free Θ0.
     jitter  : add noise to the joints driving the colliding vertices, increase σ over time.
     keypose : nearest of the AMASS K-means key poses (K=128) -> keyposes (K,69)."""
@@ -219,6 +229,6 @@ def find_initial_pose(body, theta, betas=None, global_orient=None, strategy="jit
         for j in joints.tolist():
             cand[0, 3 * j:3 * j + 3] += sigma * torch.randn(3, device=th.device, dtype=th.dtype)
         th = cand
-        if it % 20 == 19:
+        if it % 5 == 4:
             sigma *= 1.5
     raise RuntimeError("Jitter could not find a collision-free pose")
