@@ -71,7 +71,9 @@ Open `notebooks/colab_cloaf.ipynb` in Colab (File → Open notebook → GitHub �
 
 ## Phase 4: decision point (30 min)
 
-When the training run stops, check the loss plot (Step 5, second cell), then run **Step 6** with the current checkpoint and **Step 7**.
+When the training run stops, check the loss plot (Step 5, second cell) and the loss reference (third cell: network vs "zero field" = do nothing), then run **Step 6** with the current checkpoint and **Step 7**.
+
+The network has learned something only if its loss is clearly below the zero field (for example 0.5x or less).
 
 | What you see | Do |
 |---|---|
