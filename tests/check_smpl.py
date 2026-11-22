@@ -51,8 +51,10 @@ def main():
     v0 = body.vertices(torch.zeros(1, 69, device=body.device))[0]
     w = winding_numbers(v0, body.faces)
     rest = body.rest_inside
-    print(f"[INFO] rest pose: {int(rest.sum())} vertices with winding number > 1 "
-          f"(max {w.max():.3f}); they are ignored when counting collisions")
+    print(f"[INFO] collision test '{body.collision_mode}': {int(rest.sum())} vertices flagged in the "
+          f"rest pose (full-mesh winding number max {w.max():.3f}); they are ignored when counting")
+    print(f"[INFO] ignored vertices in total (rest pose + crotch/armpit regions): "
+          f"{int(body.collision_ignore.sum())}")
     if rest.any():
         J = body.smpl.lbs_weights[rest].argmax(-1)
         names = {}

@@ -53,6 +53,7 @@ Open `notebooks/colab_cloaf.ipynb` in Colab (File → Open notebook → GitHub �
 ## Phase 2: baselines and start of training (45 min)
 
 - [ ] **Step 3.** Prepare AMASS and select the 3 test sequences.
+- [ ] **Step 3b.** Collision test on clean AMASS: Col.Rate on clean mocap should be low with the default ("parts") test.
 - [ ] **Step 4.** Training-free baselines, `point_target` and `smooth_target`, about 10 minutes. Results land in `cloaf_data/results/`.
   - **Check:** the line `corruption: ... N colliding vertices at the peak frame` must show N > 0. If N = 0, add `--corrupt_amp 1.6`.
 - [ ] **Step 5.** Start training (120 minutes per run).
