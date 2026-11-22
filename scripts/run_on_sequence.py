@@ -75,7 +75,8 @@ def corrupt(body, poses, go, start, length, amp):
                     best = (c, idx, sign)
     c, idx, sign = best
     out = poses.clone()
-    out[:, idx] += torch.as_tensor(sign * bump(len(poses), start, length, amp), dtype=out.dtype)
+    out[:, idx] += torch.as_tensor(sign * bump(len(poses), start, length, amp), dtype=out.dtype,
+                                   device=out.device)
     print(f"corruption: body_pose[{idx}] {'+' if sign > 0 else '-'}{amp} rad, "
           f"{c} colliding vertices at the peak frame")
     return out
