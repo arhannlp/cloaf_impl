@@ -39,6 +39,10 @@ class _Unpickler(pickle.Unpickler):
     def find_class(self, module, name):
         if module.split(".")[0] == "chumpy":
             return _ChumpyStub
+        if module.startswith("scipy.sparse"):         # old private module paths (csc, compressed, ...)
+            import scipy.sparse
+            if hasattr(scipy.sparse, name):
+                return getattr(scipy.sparse, name)
         return super().find_class(module, name)
 
 
@@ -54,6 +58,8 @@ def _to_array(key, v):
         raise ValueError(f"cannot convert chumpy field '{key}', attributes: {sorted(d)}")
     if hasattr(v, "r") and type(v).__module__.startswith("chumpy"):   # real chumpy installed
         return np.asarray(v.r)
+    if hasattr(v, "toarray"):                    # scipy sparse (J_regressor) -> dense array
+        return np.asarray(v.toarray())
     return v
 
 
@@ -84,7 +90,10 @@ def main():
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     done = []
-    for name, raw in find_models(Path(a.src)):
+    src = Path(a.src)
+    if not src.exists():
+        raise SystemExit(f"not found: {src}  (check the folder and file name in Google Drive)")
+    for name, raw in find_models(src):
         target = next((v for k, v in NAMES.items() if k in name.lower()), None)
         if target is None:
             continue
