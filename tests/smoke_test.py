@@ -73,7 +73,7 @@ def check(name, ok, detail):
 
 def main():
     from cloaf.body import SMPLBody, pinv_solve
-    from cloaf.collision import count_collisions, winding_numbers
+    from cloaf.collision import winding_numbers
     from cloaf.model import MotionField
     from cloaf.train import trajectory_loss
     from cloaf.integrate import cloaf_solve, correct_sequence
@@ -113,7 +113,7 @@ def main():
     v = body.vertices(th0[:1])[0]
     w_in = winding_numbers(v.float(), body.faces, torch.zeros(1, 3)).item()
     w_surf = winding_numbers(v.float(), body.faces).mean().item()
-    n_col = count_collisions(v[None], body.faces).item()
+    n_col = body.count_collisions(v[None]).item()
     results.append(check("4 winding numbers", abs(w_in - 1) < 0.05 and abs(w_surf - 0.5) < 0.1,
                          f"center {w_in:.3f} (≈1), surface mean {w_surf:.3f} (≈0.5), "
                          f"colliding vertices {n_col} (expect 0)"))

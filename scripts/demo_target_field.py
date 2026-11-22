@@ -17,7 +17,6 @@ from torchdiffeq import odeint
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloaf.body import SMPLBody, L_SHOULDER  # noqa: E402
 from cloaf.integrate import CLOAFODE, TargetField  # noqa: E402
-from cloaf.collision import count_collisions  # noqa: E402
 
 
 def main():
@@ -51,7 +50,7 @@ def main():
         verts = body.vertices(traj[:, 0])
         hand = verts[:, region].mean(1)
         print("hand-target distance (m):", (hand - target).norm(dim=-1)[::5].cpu().numpy().round(3))
-        print("colliding vertices:", count_collisions(verts, body.faces)[::5].cpu().numpy())
+        print("colliding vertices:", body.count_collisions(verts)[::5].cpu().numpy())
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     np.savez(a.out, verts=verts.float().cpu().numpy(), faces=body.faces.cpu().numpy(),
              target=target.cpu().numpy())

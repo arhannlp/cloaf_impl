@@ -18,7 +18,6 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloaf.body import SMPLBody  # noqa: E402
-from cloaf.collision import inside_vertices  # noqa: E402
 
 
 def colored(body, poses, go, name, offset):
@@ -28,7 +27,7 @@ def colored(body, poses, go, name, offset):
                           torch.as_tensor(go, dtype=body.dtype, device=body.device))
     colors = np.tile([0.7, 0.8, 1.0, 1.0], (v.shape[0], v.shape[1], 1))
     for i in range(v.shape[0]):
-        colors[i, inside_vertices(v[i], body.faces).cpu().numpy()] = [1.0, 0.1, 0.1, 1.0]
+        colors[i, body.inside(v[i]).cpu().numpy()] = [1.0, 0.1, 0.1, 1.0]
     return Meshes(v.float().cpu().numpy(), body.faces.cpu().numpy(), vertex_colors=colors,
                   name=name, position=np.array(offset))
 

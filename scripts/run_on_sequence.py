@@ -31,7 +31,6 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloaf.body import SMPLBody, L_SHOULDER, R_SHOULDER  # noqa: E402
-from cloaf.collision import count_collisions  # noqa: E402
 from cloaf.integrate import PointTargetField, SmoothTargetField, correct_sequence  # noqa: E402
 from cloaf.model import MotionField  # noqa: E402
 
@@ -71,7 +70,7 @@ def corrupt(body, poses, go, start, length, amp):
                 idx = 3 * (joint - 1) + axis
                 p = poses[peak:peak + 1].clone()
                 p[0, idx] += sign * amp
-                c = count_collisions(body.vertices(p, None, go[peak:peak + 1]), body.faces)[0].item()
+                c = body.count_collisions(body.vertices(p, None, go[peak:peak + 1]))[0].item()
                 if best is None or c > best[0]:
                     best = (c, idx, sign)
     c, idx, sign = best
@@ -139,7 +138,7 @@ def main():
     out, before = correct_sequence(body, field, inp, None, go, mode=a.mode, S=a.S, **solve_kw)
     secs = time.time() - t
     with torch.no_grad():
-        after = count_collisions(body.vertices(out, None, go), body.faces)
+        after = body.count_collisions(body.vertices(out, None, go))
 
     n = len(inp)
     col_frames = before > 0

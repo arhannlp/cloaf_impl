@@ -12,7 +12,6 @@ import torch
 from torchdiffeq import odeint
 
 from .body import SMPLBody, pinv_solve
-from .collision import count_collisions
 
 
 # ====================================================================== #
@@ -145,14 +144,13 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
     N = poses.shape[0]
     sel = lambda x, i: None if x is None else x[i:i + 1]
     verts = body.vertices(poses, betas, global_orient)
-    counts = count_collisions(verts, body.faces)
+    counts = body.count_collisions(verts)
     out = poses.clone().to(body.dtype)
     last_free = None          # most recent output pose known to be collision-free
     skipped = []
 
     def collides(theta, k):
-        return count_collisions(body.vertices(theta, sel(betas, k), sel(global_orient, k)),
-                                body.faces)[0] > 0
+        return body.count_collisions(body.vertices(theta, sel(betas, k), sel(global_orient, k)))[0] > 0
 
     def start_pose(candidate, k):
         """Collision-free Θ0 for frame k: candidate, else jitter, else last free pose."""
@@ -203,13 +201,12 @@ def find_initial_pose(body, theta, betas=None, global_orient=None, strategy="jit
         d = (keyposes - theta).norm(dim=-1)   # TODO: the paper uses keypoint distance
         return keyposes[d.argmin()][None].to(theta)
 
-    from .collision import inside_vertices
     W = body.smpl.lbs_weights                           # (V,24)
     th = theta.clone().to(body.dtype)
     sigma = sigma0
     for it in range(max_iter):
         v = body.vertices(th, betas, global_orient)[0]
-        m = inside_vertices(v, body.faces)
+        m = body.inside(v)
         if m.sum() == 0:
             return th
         joints = W[m].sum(0).topk(4).indices            # joints responsible for the collision

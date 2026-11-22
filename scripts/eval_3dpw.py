@@ -27,7 +27,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloaf.body import SMPLBody  # noqa: E402
-from cloaf.collision import count_collisions, collision_rate  # noqa: E402
+from cloaf.collision import collision_rate  # noqa: E402
 from cloaf.integrate import correct_sequence  # noqa: E402
 from cloaf.metrics import joints14, mpjpe, pa_mpjpe, accel_error  # noqa: E402
 from cloaf.model import MotionField  # noqa: E402
@@ -84,7 +84,7 @@ def main():
         E["mpjpe"].append(mpjpe(pj, gj) * len(pj))
         E["pa"].append(pa_mpjpe(pj, gj) * len(pj))
         E["accel"].append(accel_error(pj, gj) * (len(pj) - 2))   # TODO: split at gaps in the valid mask
-        E["counts"].append(count_collisions(pv[v], body.faces).cpu())
+        E["counts"].append(body.count_collisions(pv[v]).cpu())
 
     n = sum(len(c) for c in E["counts"])
     counts = torch.cat(E["counts"])

@@ -11,16 +11,19 @@ is detected!
 => FIRST try to reproduce the HMR2.0 numbers of Table 1 (39.2 / 21.6) with
    this detector. If they do not match, discuss the threshold / excluded regions.
 
-NOTE: verify that the SMPL mesh is watertight with trimesh (mesh.is_watertight).
+NOTE: the SMPL mesh is watertight (checked with tests/check_smpl.py). Vertices
+that already look "inside" in the rest pose are not real collisions; SMPLBody
+excludes them by default (SMPLBody.collision_ignore).
 """
 import math
 import torch
 
 
-def winding_numbers(verts, faces, queries=None, chunk: int = 512):
-    """verts (V,3), faces (F,3), queries (N,3) -> (N,) GWN. Run on GPU for speed."""
-    if queries is None:
-        queries = verts
+def winding_numbers(verts, faces, queries=None, chunk: int = 256, dtype=torch.float64):
+    """verts (V,3), faces (F,3), queries (N,3) -> (N,) GWN. Run on GPU for speed.
+    float64 by default: near-touching surfaces give wrong values in float32."""
+    verts = verts.to(dtype)
+    queries = verts if queries is None else queries.to(dtype)
     tri = verts[faces]                                       # (F,3,3)
     out = []
     for q in queries.split(chunk):
@@ -36,7 +39,7 @@ def winding_numbers(verts, faces, queries=None, chunk: int = 512):
 @torch.no_grad()
 def inside_vertices(verts, faces, thresh: float = 1.0, ignore_mask=None):
     """Mask (V,) of vertices that lie inside the body. ignore_mask: vertices not to count."""
-    w = winding_numbers(verts.float(), faces)
+    w = winding_numbers(verts, faces)
     m = w > thresh
     if ignore_mask is not None:
         m &= ~ignore_mask

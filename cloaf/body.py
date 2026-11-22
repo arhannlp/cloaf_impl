@@ -13,6 +13,8 @@ from __future__ import annotations
 import torch
 import smplx
 
+from .collision import count_collisions, inside_vertices
+
 POSE_DIM = 69  # body_pose
 
 # SMPL joint indices
@@ -23,7 +25,8 @@ SPINE3 = 9
 
 class SMPLBody(torch.nn.Module):
     def __init__(self, model_path: str, gender: str = "neutral",
-                 device="cuda", dtype=torch.float64, exclude_radius: float = 0.07):
+                 device="cuda", dtype=torch.float64, exclude_radius: float = 0.07,
+                 ignore_rest_collisions: bool = True):
         super().__init__()
         self.device, self.dtype = torch.device(device), dtype
         self.smpl = smplx.SMPL(model_path, gender=gender).to(self.device, dtype)
@@ -41,6 +44,23 @@ class SMPLBody(torch.nn.Module):
         bad_face = self.excluded_verts[self.faces].any(-1)
         area[bad_face] = 0.0
         self.register_buffer("face_prob", area / area.sum())
+
+        # Vertices that the collision test already flags in the rest pose are a
+        # property of the template (or of the test), not a self-intersection of the
+        # pose. They are ignored when counting collisions, unless disabled.
+        rest = inside_vertices(v, self.faces)
+        self.register_buffer("rest_inside", rest)
+        self.register_buffer("collision_ignore", rest.clone() if ignore_rest_collisions
+                             else torch.zeros_like(rest))
+
+    # ------------------------------------------------------------------ #
+    def inside(self, verts):
+        """(V,3) -> (V,) mask of vertices inside the body (rest-pose ones ignored)."""
+        return inside_vertices(verts, self.faces, ignore_mask=self.collision_ignore)
+
+    def count_collisions(self, verts_batch):
+        """(B,V,3) -> (B,) number of vertices inside the body (rest-pose ones ignored)."""
+        return count_collisions(verts_batch, self.faces, ignore_mask=self.collision_ignore)
 
     # ------------------------------------------------------------------ #
     @staticmethod

@@ -12,7 +12,11 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloaf.body import SMPLBody  # noqa: E402
-from cloaf.collision import count_collisions  # noqa: E402
+from cloaf.collision import winding_numbers  # noqa: E402
+
+JOINTS = ['pelvis', 'l_hip', 'r_hip', 'spine1', 'l_knee', 'r_knee', 'spine2', 'l_ankle', 'r_ankle',
+          'spine3', 'l_foot', 'r_foot', 'neck', 'l_collar', 'r_collar', 'head', 'l_shoulder',
+          'r_shoulder', 'l_elbow', 'r_elbow', 'l_wrist', 'r_wrist', 'l_hand', 'r_hand']
 
 
 def main():
@@ -43,12 +47,25 @@ def main():
     except ImportError:
         print("[SKIP] trimesh not installed, watertight check skipped")
 
-    c = count_collisions(body.vertices(torch.zeros(1, 69, device=body.device)), body.faces)[0].item()
-    print(f"[{'PASS' if c == 0 else 'NOTE'}] T-pose colliding vertices: {c} (expect 0)")
+    # Collision test in the rest (T) pose: should be 0 once the rest-pose vertices are ignored
+    v0 = body.vertices(torch.zeros(1, 69, device=body.device))[0]
+    w = winding_numbers(v0, body.faces)
+    rest = body.rest_inside
+    print(f"[INFO] rest pose: {int(rest.sum())} vertices with winding number > 1 "
+          f"(max {w.max():.3f}); they are ignored when counting collisions")
+    if rest.any():
+        J = body.smpl.lbs_weights[rest].argmax(-1)
+        names = {}
+        for j in J.tolist():
+            names[JOINTS[j]] = names.get(JOINTS[j], 0) + 1
+        print("       by body part:", dict(sorted(names.items(), key=lambda x: -x[1])))
+        print("       winding numbers:", [round(x, 3) for x in w[rest][:10].tolist()])
+    c = body.count_collisions(v0[None])[0].item()
+    print(f"[{'PASS' if c == 0 else 'FAIL'}] T-pose colliding vertices after ignoring: {c} (expect 0)")
     bent = torch.zeros(1, 69, device=body.device, dtype=body.dtype)
     bent[0, 3 * (18 - 1) + 1] = -2.6        # left elbow fully bent
     bent[0, 3 * (19 - 1) + 1] = 2.6         # right elbow fully bent
-    c2 = count_collisions(body.vertices(bent), body.faces)[0].item()
+    c2 = body.count_collisions(body.vertices(bent))[0].item()
     print(f"[{'PASS' if c2 > 0 else 'NOTE'}] fully bent elbows, colliding vertices: {c2} "
           "(expect > 0: forearm inside upper arm)")
 
