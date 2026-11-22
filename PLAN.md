@@ -18,19 +18,22 @@ The times below count back from 12:00. If you start later, cut Phase 5 (second t
 
 Nothing else works without this.
 
-- [ ] **SMPL.** Get it from the supervisor, or register at smpl.is.tue.mpg.de and download "SMPL for Python" (v1.1.0). Rename the files:
-  - `basicmodel_neutral_lbs_10_207_0_v1.1.0.pkl` → `SMPL_NEUTRAL.pkl`
-  - `basicmodel_m_lbs_10_207_0_v1.1.0.pkl` → `SMPL_MALE.pkl`
-  - `basicmodel_f_lbs_10_207_0_v1.1.0.pkl` → `SMPL_FEMALE.pkl`
+- [ ] **SMPL.** On smpl.is.tue.mpg.de → Downloads, take **only** "Download version 1.1.0 for Python 2.7 (female/male/neutral, 300 shape PCs)" = `SMPL_python_v.1.1.0.zip`. Ignore the "Python 2.7" label: we only use the model files inside. Do not unzip or rename anything by hand; convert it (it removes the old `chumpy` dependency and sets the names smplx expects):
+  ```bash
+  python scripts/convert_smpl_pkl.py --src SMPL_python_v.1.1.0.zip --out data/body_models/smpl
+  ```
+  ```bash
+  python tests/check_smpl.py --smpl data/body_models/smpl
+  ```
 - [ ] **AMASS.** Register at amass.is.tue.mpg.de and download **one** sub-dataset, "SMPL+H G". Pick a small one if the big ones download slowly; one is enough for tonight.
 - [ ] **Upload to Google Drive:**
   ```
-  MyDrive/cloaf_data/smpl/SMPL_NEUTRAL.pkl, SMPL_MALE.pkl, SMPL_FEMALE.pkl
+  MyDrive/cloaf_data/SMPL_python_v.1.1.0.zip
   MyDrive/cloaf_data/amass/<subset>.tar.bz2
   ```
 - [ ] **Local setup, while uploading.** Clone the repo, create a venv, `pip install -r requirements.txt`, then `python tests/smoke_test.py`. You need this local setup later to watch the animations.
 
-**Gate:** the files are in Drive and the local smoke test prints `SMOKE TEST OK`.
+**Gate:** the files are in Drive, the local smoke test prints `SMOKE TEST OK`, and `tests/check_smpl.py` prints PASS for all three genders.
 
 ## Phase 1: sanity checks on the real body (45 min)
 
@@ -114,7 +117,9 @@ When the training run stops, check the loss plot (Step 5, second cell), then run
 
 | Symptom | Fix |
 |---|---|
-| `FileNotFoundError ... SMPL_NEUTRAL.pkl` | Rename the files (Phase 0); `--smpl` must point to the folder that contains them |
+| `FileNotFoundError ... SMPL_NEUTRAL.pkl` | Run `scripts/convert_smpl_pkl.py` (Phase 0); `--smpl` must point to the folder it wrote |
+| `No module named 'chumpy'` | You are loading the original files; convert them with `scripts/convert_smpl_pkl.py` |
+| `cannot convert chumpy field ...` | Send me the full message (the converter met an unexpected file layout) |
 | `no AMASS .npz files` | The tar.bz2 was not extracted, or the path is wrong; check `find data/amass -name '*.npz'` |
 | `CUDA out of memory` | `--batch 8` or `--S 500` |
 | Loss `nan` | `--lr 3e-5`, restart without `--resume` (or delete the `.state` file) |

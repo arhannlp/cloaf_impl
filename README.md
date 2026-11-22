@@ -64,7 +64,11 @@ pip install -r requirements.txt
 
 Data (all academic licenses, register yourself; never commit them, `.gitignore` excludes `data/`):
 
-- **SMPL** (smpl.is.tue.mpg.de): `data/body_models/smpl/SMPL_{NEUTRAL,MALE,FEMALE}.pkl`
+- **SMPL** (smpl.is.tue.mpg.de → Downloads → "version 1.1.0 for Python 2.7 (female/male/neutral)", `SMPL_python_v.1.1.0.zip`). Convert it once; this removes the old `chumpy` dependency and writes `data/body_models/smpl/SMPL_{NEUTRAL,MALE,FEMALE}.pkl`:
+  ```bash
+  python scripts/convert_smpl_pkl.py --src SMPL_python_v.1.1.0.zip --out data/body_models/smpl
+  ```
+  Check it with `python tests/check_smpl.py --smpl data/body_models/smpl`.
 - **AMASS** (amass.is.tue.mpg.de): training data, SMPL+H format
 - **3DPW** (virtualhumans.mpi-inf.mpg.de/3DPW): evaluation
 - **4D-Humans / HMR2.0** (github.com/shubham-goel/4D-Humans): baseline predictions
@@ -190,6 +194,7 @@ cloaf/
 scripts/
   check_linearity.py   Step 1: Fig. 5 and B.7/B.8 (no training)
   demo_target_field.py Step 2: Fig. 3/4 (no training)
+  convert_smpl_pkl.py  official SMPL v1.1.0 zip -> chumpy-free SMPL_*.pkl for smplx
   prepare_amass.py     AMASS (SMPL+H) -> one training file
   run_on_sequence.py   CLOAF on one sequence, optional injected collisions, before/after numbers
   view_results.py      side-by-side animation of input vs CLOAF output (aitviewer)
@@ -197,6 +202,7 @@ scripts/
 notebooks/
   colab_cloaf.ipynb    the whole pipeline on a Colab GPU
 tests/smoke_test.py    Step 0: end-to-end test with a fake model
+tests/check_smpl.py    checks that the real SMPL files load and behave
 ```
 
 Suggested reading order: Sec. 3 of the paper → `body.py` (run Step 1) → `integrate.py` and Sec. 4.4 (run Step 2) → `model.py`, `train.py` → `collision.py`, `metrics.py`, `correct_sequence()`, `eval_3dpw.py`.
