@@ -3,8 +3,8 @@ torchdiffeq
 smplx
 numpy
 scipy
-scikit-learn      # keypose K-means (opsiyonel)
-trimesh           # watertight kontrolü, mesh IO
-aitviewer         # SMPL dizilerini animasyon olarak izlemek (lokal, ekranlı makine)
+scikit-learn      # keypose K-means (optional)
+trimesh           # watertight check, mesh IO
+aitviewer         # watch SMPL sequences as animations (local machine with a screen)
 matplotlib
 jupyter
