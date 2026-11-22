@@ -26,16 +26,22 @@ from .model import MotionField
 # ---------------------------------------------------------------------- #
 def prepare_amass(amass_root, out_path, target_fps=30, max_files=None):
     """AMASS (SMPL+H npz) -> a single npz: body_pose (N,69), seq_id (N,).
+    amass_root: one folder or a list of folders (e.g. ["data/amass/ACCAD", "data/amass/CMU"]).
     AMASS 'poses' is 156-dim (SMPL+H): [0:3] global, [3:66] 21 body joints,
     [66:] hand joints. SMPL joints 22-23 (hands) are set to zero."""
     import glob, os
+    roots = [amass_root] if isinstance(amass_root, (str, os.PathLike)) else list(amass_root)
     poses, seq = [], []
-    files = sorted(glob.glob(os.path.join(amass_root, "**/*.npz"), recursive=True))
-    files = [f for f in files if not f.endswith("shape.npz")]
-    if max_files is not None:
-        files = files[:max_files]
-    if not files:
-        raise FileNotFoundError(f"no AMASS .npz files under {amass_root}")
+    files = []
+    for root in roots:
+        found = sorted(glob.glob(os.path.join(root, "**/*.npz"), recursive=True))
+        found = [f for f in found if not f.endswith("shape.npz")]
+        if max_files is not None:
+            found = found[:max_files]
+        if not found:
+            raise FileNotFoundError(f"no AMASS .npz files under {root}")
+        print(f"{root}: {len(found)} files")
+        files += found
     for i, f in enumerate(files):
         d = np.load(f)
         if "poses" not in d:

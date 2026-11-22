@@ -75,7 +75,7 @@ When the training run stops, check the loss plot (Step 5, second cell), then run
 | What you see | Do |
 |---|---|
 | Network: fewer colliding frames after than before, and lower than `point_target` | Good. Continue training (Phase 5) |
-| Loss went down, but the network is no better than `point_target` | Continue training once; compare `smooth_target` |
+| Loss went down, but the network is no better than `point_target` | Continue training once; if CMU is in Drive, set `TRAIN_SETS = ['ACCAD', 'CMU']` in Step 3, re-run the setup cells and Step 3, then continue training (`--resume` keeps the weights) |
 | Loss did not go down | Troubleshooting below, then restart without `--resume` |
 | Collisions *increase* after CLOAF | Send me the Step 6 output |
 
