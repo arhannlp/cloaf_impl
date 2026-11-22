@@ -43,14 +43,17 @@ class CLOAFODE(torch.nn.Module):
 
 @torch.no_grad()
 def cloaf_solve(body, field, theta_0, theta_1, S=1000, betas=None, global_orient=None,
-                method="dopri5", rtol=1e-4, atol=1e-5, n_out=2, seed=0, **kw):
+                method="dopri5", rtol=1e-4, atol=1e-5, n_out=2, seed=0, options=None, **kw):
     """Integrate from Θ0 (collision-free) towards the target Θ1.
+    method="dopri5" is the paper's adaptive solver. For speed, use a fixed-step
+    solver instead, e.g. method="rk4", options=dict(step_size=0.1) (10 steps).
     Returns the trajectory (n_out, B, 69) and the number of solver evaluations."""
     g = torch.Generator(device=body.device).manual_seed(seed)
     sample = body.sample_surface(S, generator=g)
     ode = CLOAFODE(body, field, theta_1.to(body.dtype), sample, betas, global_orient, **kw)
     ts = torch.linspace(0, 1, n_out, device=body.device, dtype=body.dtype)
-    traj = odeint(ode, theta_0.to(body.dtype), ts, method=method, rtol=rtol, atol=atol)
+    traj = odeint(ode, theta_0.to(body.dtype), ts, method=method, rtol=rtol, atol=atol,
+                  options=options)
     return traj, ode.nfe
 
 

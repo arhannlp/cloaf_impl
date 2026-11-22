@@ -15,10 +15,23 @@ The official code (github.com/cvlab-epfl/CLOAF) was not available, so this is a 
 | Self-intersection detector (`collision.py`) | Works; tested on a fake mesh | Calibration against Table 1 |
 | Simple hand-crafted field (Sec. 4.4) | Works; **no training needed** | SMPL files |
 | Learned motion field `f_ω` (`model.py`) | Code runs, but the network is **untrained** | Training on AMASS (GPU) |
-| Pose correction (`correct_sequence`) | Code runs, but the output is **meaningless until `f_ω` is trained** | A trained checkpoint |
+| Pose correction (`correct_sequence`, `run_on_sequence.py`) | Code runs, but the output is **meaningless until `f_ω` is trained** | A trained checkpoint |
 | 3DPW evaluation (`eval_3dpw.py`) | Draft | 3DPW, HMR2.0 predictions, `J_regressor_h36m.npy` |
 
 **In short:** if you give it SMPL poses today, it will output SMPL parameters, but they will not be corrected poses. The network's weights are random. CLOAF only works after Step 4 (training).
+
+---
+
+## Fast path to a working CLOAF
+
+1. Get the SMPL files and one AMASS sub-dataset (e.g. CMU, "SMPL+H G").
+2. Open `notebooks/colab_cloaf.ipynb` in Google Colab with a GPU (or use a university GPU).
+3. Run Steps 0–2 (checks, no training), then prepare AMASS and train with a time budget (`--minutes`).
+4. Run `scripts/run_on_sequence.py --corrupt` on a few sequences: it injects self-intersections
+   into clean mocap, runs CLOAF and prints collisions before/after and the distance to the clean motion.
+5. Watch the results with `scripts/view_results.py` (local machine with a screen).
+
+The 3DPW evaluation (Steps 3 and 5 below) needs HMR2.0 predictions and comes after this.
 
 ---
 
@@ -115,10 +128,18 @@ Target: the HMR2.0 row of Table 1/2 (Col.Rate@0 = 39.2 %, @100 = 21.6 %). The pa
 
 ### Step 4: Train `f_ω` (needs AMASS and a GPU)
 
-Convert AMASS with `prepare_amass()` in `cloaf/train.py`, then:
+```bash
+python scripts/prepare_amass.py --amass_root data/amass --out data/amass_smpl_30fps.npz
+```
 
 ```bash
-python -m cloaf.train --smpl data/body_models/smpl --amass data/amass_smpl_30fps.npz
+python -m cloaf.train --smpl data/body_models/smpl --amass data/amass_smpl_30fps.npz --minutes 150
+```
+
+Then try it on one sequence with injected self-intersections:
+
+```bash
+python scripts/run_on_sequence.py --smpl data/body_models/smpl --seq data/amass/CMU/01/01_01_poses.npz --field checkpoints/field.pt --corrupt
 ```
 
 Start by overfitting a small subset (for example CMU only): the loss must go down. Then train on everything.
@@ -166,7 +187,12 @@ cloaf/
 scripts/
   check_linearity.py   Step 1: Fig. 5 and B.7/B.8 (no training)
   demo_target_field.py Step 2: Fig. 3/4 (no training)
+  prepare_amass.py     AMASS (SMPL+H) -> one training file
+  run_on_sequence.py   CLOAF on one sequence, optional injected collisions, before/after numbers
+  view_results.py      side-by-side animation of input vs CLOAF output (aitviewer)
   eval_3dpw.py         Steps 3 and 5: Table 1, 2, 4
+notebooks/
+  colab_cloaf.ipynb    the whole pipeline on a Colab GPU
 tests/smoke_test.py    Step 0: end-to-end test with a fake model
 ```
 
