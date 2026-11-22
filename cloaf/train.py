@@ -147,8 +147,10 @@ def main():
         st = torch.load(state_path, map_location=a.device)
         net.load_state_dict(st["net"])
         opt.load_state_dict(st["opt"])
+        for g in opt.param_groups:          # --lr on the command line wins over the saved value
+            g["lr"] = a.lr
         start = st["it"] + 1
-        print(f"resumed from {state_path} at iteration {start}")
+        print(f"resumed from {state_path} at iteration {start}, lr {a.lr}")
     elif not Path(log_path).exists() or not a.resume:
         Path(log_path).write_text("iteration,loss,seconds\n")
 
