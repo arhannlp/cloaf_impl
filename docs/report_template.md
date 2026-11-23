@@ -142,22 +142,25 @@ The start pose already has 10 colliding vertices, so the constraint creates almo
 
 ## 5c. Sequence correction with the contact constraint
 
-Same sequence (SFU `0005_2FeetJump001`), 60 frames, collision injected in frames 20–39 (`body_pose[50]` +1.2 rad, 319 colliding vertices at the peak), smooth_target field, `colliding_only` mode (frames with ≤ 50 colliding vertices are kept), RK4 10 steps, Colab CPU.
+Same sequence (SFU `0005_2FeetJump001`), 60 frames, collision injected in frames 20–39 (`body_pose[50]` +1.2 rad, 319 colliding vertices at the peak), smooth_target field, RK4 10 steps. A frame counts as colliding with more than 50 colliding vertices; `colliding_only` keeps the other frames unchanged.
 
-| | Input (with injected collision) | Contact constraint 5 cm | No constraint (paper's J^+) |
-|---|---|---|---|
-| Colliding frames | 28 / 60 | **3 / 60** (frames 0–2, no collision-free start) | |
-| Colliding vertices (sum) | 12108 | **2002** | |
-| Distance to the clean motion | 15.2 mm | **11.9 mm** | |
-| Jerk mean / max | 5.0 / 17.3 mm | 12.4 / 63.0 mm | |
-| Shift of corrected frames | – | 42.0 mm | |
-| Start pose of corrected frames | – | previous output 25, fallback 0, skipped 3 | |
-| Time | – | 46 s/frame (CPU) | |
+| | Colliding frames | Colliding vertices (sum) | **Distance to the clean motion** | Jerk mean / max | Shift of clean frames | Start pose: previous / fallback / skipped |
+|---|---|---|---|---|---|---|
+| Input (with injected collision) | 28 / 60 | 12108 | 15.2 mm | 5.0 / 17.3 mm | – | – |
+| No constraint, colliding_only | 26 / 60 | 12190 | 15.0 mm | 5.6 / 20.3 mm | 0 | 5 / 20 / 3 |
+| No constraint, all (paper) | 28 / 60 | 12174 | 15.6 mm | 5.3 / 18.5 mm | 1.2 mm | 31 / 25 / 4 |
+| **Contact constraint, colliding_only** | **3 / 60** | **2002** | **11.9 mm** | 12.4 / 63.0 mm | **0** | 25 / 0 / 3 |
+| **Contact constraint, all** | **5 / 60** | **1702** | 14.2 mm | 12.4 / **31.6 mm** | 8.2 mm | 55 / 1 / 4 |
 
-- **The collisions are gone** except in the first three frames, where the clean motion itself already collides and no collision-free start exists.
-- **The corrected motion is closer to the clean motion than the input** (11.9 vs 15.2 mm). The 116 mm "distance to target" of the single-frame test (Sec. 5b) was misleading: the target is the wrong pose; what matters is the distance to the clean motion.
-- **The chain of successive frames holds**: every corrected frame could start from the previous output, because every output was collision-free. Without the constraint, about half of the frames had to fall back to an older pose.
-- **The motion is less smooth**: the largest frame-to-frame jerk grows from 17 to 63 mm. Likely at the transitions between corrected and kept frames (start and end of the collision window), which is exactly the trade-off the project description asks about. To check: the animation around frames 20 and 39, and the same run in `all` mode.
+Time per frame on a T4: 1.3 s (colliding_only, no constraint), 2.7 s (all); 46 s on the Colab CPU. The remaining colliding frames are frames 0–3: the clean motion already collides there and no collision-free start pose exists.
+
+- **Without the constraint, neither mode removes the collisions** (28 → 26–28 frames): the paper's J^+ projection does not help in this test, consistent with Sec. 5b.
+- **With the constraint, both modes remove about 85 % of the colliding vertices**, and the chain of successive frames holds: almost every corrected frame starts from the previous output, because the outputs are collision-free. Without the constraint, about half of the frames fall back to an older pose.
+- **The corrected motion is closer to the clean motion than the input** in `colliding_only` (11.9 vs 15.2 mm). The 116 mm "distance to target" of the single-frame test (Sec. 5b) was misleading: the target is the wrong pose; what matters is the distance to the clean motion.
+- **The trade-off the project asks about is visible**:
+  - `colliding_only` preserves the original motion best (closest to the clean motion, clean frames untouched) but has the largest jump (63 mm), presumably at the transitions between corrected and kept frames.
+  - `all` halves the largest jump (32 mm) but also moves frames that did not need it (8.2 mm on average) and ends further from the clean motion (14.2 mm).
+- **Jitter inside the corrected window**: the mean jerk is 12.4 mm in both modes (5.0 in the input), so the motion is also less smooth inside the window, not only at its borders. Each frame is corrected independently and the set of active contact constraints changes from frame to frame, which likely produces a stop-and-go motion at the contact. To check with the per-frame jerk (`scripts/plot_jerk.py`) and the animations.
 
 ## 6. Observations from the animations
 
