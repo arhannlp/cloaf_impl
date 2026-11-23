@@ -28,6 +28,7 @@ class CLOAFODE(torch.nn.Module):
         self.theta_1, self.betas, self.go, self.t1 = theta_1, betas, global_orient, t1
         self.jac_method = jac_method
         self.nfe = 0  # number of function evaluations (solver steps)
+        self.proj_err = []  # ||J J^+ f - f|| / ||f||: share of the requested motion SMPL cannot follow
         with torch.no_grad():
             self.x_1 = body.points(theta_1, sample, betas, global_orient)
 
@@ -38,7 +39,12 @@ class CLOAFODE(torch.nn.Module):
         dt = (self.t1 - t).expand(theta.shape[0]).to(theta)
         f = self.field(x.float(), theta.float(), self.theta_1.float(), dt.float(),
                        x_target=self.x_1.float())                               # [Field velocities]
-        return pinv_solve(J, f.reshape(f.shape[0], -1))                         # [Parametric correction]
+        f = f.reshape(f.shape[0], -1)
+        dtheta = pinv_solve(J, f)                                               # [Parametric correction]
+        with torch.no_grad():
+            r = (J.double() @ dtheta[..., None])[..., 0] - f.double()
+            self.proj_err.append((r.norm(dim=-1) / f.double().norm(dim=-1).clamp_min(1e-12)).mean().item())
+        return dtheta
 
 
 @torch.no_grad()
