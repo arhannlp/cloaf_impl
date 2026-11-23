@@ -210,6 +210,26 @@ What the per-frame view shows:
 
 **Chosen setting**: contact constraint 5 cm, `colliding_only`, return phase (5 mm, decay 0.7), smoothing σ = 1.5.
 
+## 5d. The working pipeline on real motion (no injected collision)
+
+`scripts/cloaf_correct.py` with the chosen settings (Sec. 5c, `cloaf/pipeline.py`) on the first 90 frames of SFU `0005_2FeetJump001` as recorded, without any injected collision. T4 GPU.
+
+| | Before | After |
+|---|---|---|
+| Colliding frames (> 50 vertices) | 31 / 90 | **0 / 90** |
+| Colliding vertices (sum) | 5177 | **567** (−89 %) |
+| Mean change of the body | – | 13.5 mm |
+| Largest jerk | 17.4 mm | 27.9 mm |
+| Start poses | – | previous output 31, last collision-free 1, jitter 1, rest pose 2, skipped 0 |
+| Return-phase frames / smoothed frames | – | 18 / 51 |
+| Time | – | 1.3 s per frame |
+
+![Frame 0: input (hands inside the hips, 730 colliding vertices) and CLOAF output (0)](figures/natural_jump_frame0.png)
+
+- Every colliding frame is corrected, including the first ones, which collide from the start: they now start from the rest pose or a jittered pose instead of being skipped.
+- The largest jerk grows only from 17 to 28 mm (63 mm before the return phase and the smoothing).
+- **Open question**: these collisions belong to the recorded motion itself: the hands rest on the hips and sink into them, mostly because the finger poses are lost when AMASS (SMPL+H) is converted to SMPL and the hands become flat. CLOAF moves the hands out of the hips. Whether such natural contacts should be corrected depends on the application.
+
 ## 6. Observations from the animations
 
 (watch `*_net_all.npz`, `*_net_colliding_only.npz`, `*_smooth_target_all.npz` with `scripts/view_results.py`)

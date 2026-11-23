@@ -7,7 +7,7 @@ faces touching a colliding vertex in red. Works headless (Colab), no aitviewer n
 
 Accepts the output of cloaf_correct.py and of run_on_sequence.py ('input', 'corrected').
 The body is shown in its own frame (global rotation and translation removed), front view,
-so the pose changes are easy to see.
+so the pose changes are easy to see (--azim 90 front, -90 back, 0 side).
 """
 import argparse
 import sys
@@ -40,6 +40,8 @@ def main():
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--end", type=int, default=None)
     ap.add_argument("--size", type=float, default=4.0, help="inches per panel")
+    ap.add_argument("--azim", type=float, default=90, help="camera azimuth: 90 = front, -90 = back")
+    ap.add_argument("--elev", type=float, default=8)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
 
@@ -80,7 +82,7 @@ def main():
             ax.set_ylim(-0.9, 0.9)
             ax.set_zlim(-0.9, 0.9)
             ax.set_box_aspect((1, 1, 1))
-            ax.view_init(elev=8, azim=-90)
+            ax.view_init(elev=a.elev, azim=a.azim)
             ax.axis("off")
             ax.set_title(f"{name}  frame {k}  colliding vertices {int(inside.sum())}", fontsize=9)
         print(f"\rframe {k}", end="", flush=True)
