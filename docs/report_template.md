@@ -140,6 +140,25 @@ Weighting helps for two of the three frames (−26 % to −51 %), hurts the thir
 
 The start pose already has 10 colliding vertices, so the constraint creates almost no new collision, along the whole path (38 active constraints on average). It even beats the free flow, where the torso yields to the arm: here the arm is stopped at the contact instead. The price is the distance to the colliding target (116 mm on average over all vertices). Some distance is expected, because the target has the arm 1.2 rad inside the torso, but the average suggests that other body parts move as well to satisfy the constraints; the distance to the clean motion and the animations will tell whether this is a good correction.
 
+## 5c. Sequence correction with the contact constraint
+
+Same sequence (SFU `0005_2FeetJump001`), 60 frames, collision injected in frames 20–39 (`body_pose[50]` +1.2 rad, 319 colliding vertices at the peak), smooth_target field, `colliding_only` mode (frames with ≤ 50 colliding vertices are kept), RK4 10 steps, Colab CPU.
+
+| | Input (with injected collision) | Contact constraint 5 cm | No constraint (paper's J^+) |
+|---|---|---|---|
+| Colliding frames | 28 / 60 | **3 / 60** (frames 0–2, no collision-free start) | |
+| Colliding vertices (sum) | 12108 | **2002** | |
+| Distance to the clean motion | 15.2 mm | **11.9 mm** | |
+| Jerk mean / max | 5.0 / 17.3 mm | 12.4 / 63.0 mm | |
+| Shift of corrected frames | – | 42.0 mm | |
+| Start pose of corrected frames | – | previous output 25, fallback 0, skipped 3 | |
+| Time | – | 46 s/frame (CPU) | |
+
+- **The collisions are gone** except in the first three frames, where the clean motion itself already collides and no collision-free start exists.
+- **The corrected motion is closer to the clean motion than the input** (11.9 vs 15.2 mm). The 116 mm "distance to target" of the single-frame test (Sec. 5b) was misleading: the target is the wrong pose; what matters is the distance to the clean motion.
+- **The chain of successive frames holds**: every corrected frame could start from the previous output, because every output was collision-free. Without the constraint, about half of the frames had to fall back to an older pose.
+- **The motion is less smooth**: the largest frame-to-frame jerk grows from 17 to 63 mm. Likely at the transitions between corrected and kept frames (start and end of the collision window), which is exactly the trade-off the project description asks about. To check: the animation around frames 20 and 39, and the same run in `all` mode.
+
 ## 6. Observations from the animations
 
 (watch `*_net_all.npz`, `*_net_colliding_only.npz`, `*_smooth_target_all.npz` with `scripts/view_results.py`)
@@ -154,6 +173,7 @@ The start pose already has 10 colliding vertices, so the constraint creates almo
 - Training: about 1.5 h on a Colab T4 (4000 iterations, ACCAD only) in float32. The paper trained on all of AMASS on an A100 in float64; training length is not reported.
 - Training distribution: pose pairs 1–4 frames apart from clean mocap. Correction needs larger gaps and colliding targets; the paper does not say whether it trains on such pairs.
 - The non-intersection guarantee is only approximate after projecting the velocities onto SMPL with J^† (least squares); in our tests this is enough to leave the collisions in place.
+- The contact constraint stops any further approach of point pairs on non-adjacent parts once they are closer than 5 cm. Existing contacts can stay, slide or separate, but in corrected frames a new contact (e.g. a hand moving onto a knee) stops about 5 cm short. Possible refinement: allow approach in proportion to the remaining gap, approach rate ≤ κ (d − d_min) with d_min ≈ 5 mm, and sample more densely near contacts (1000 samples are ~4 cm apart on the body surface).
 - Details the paper does not specify (see README, "Ambiguities"): collision detection, network size and inputs, training settings, crotch/armpit mask, solver tolerances.
 
 ## 8. Next steps
