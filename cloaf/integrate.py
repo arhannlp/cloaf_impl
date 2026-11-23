@@ -12,6 +12,7 @@ import torch
 from torchdiffeq import odeint
 
 from .body import SMPLBody, pinv_solve
+from .model import DT_MIN
 
 
 # ====================================================================== #
@@ -78,7 +79,7 @@ class PointTargetField(torch.nn.Module):
     Use it as a sanity check of the pipeline and as a baseline for the network."""
 
     def forward(self, x, theta_t, theta_1, dt, x_target=None):
-        return (x_target - x) / dt.clamp_min(1e-3)[:, None, None]
+        return (x_target - x) / dt.clamp_min(DT_MIN)[:, None, None]
 
 
 class SmoothTargetField(torch.nn.Module):
@@ -97,7 +98,7 @@ class SmoothTargetField(torch.nn.Module):
         self.sigma = sigma
 
     def forward(self, x, theta_t, theta_1, dt, x_target=None):
-        v = (x_target - x) / dt.clamp_min(1e-3)[:, None, None]         # (B,S,3)
+        v = (x_target - x) / dt.clamp_min(DT_MIN)[:, None, None]       # (B,S,3)
         d2 = torch.cdist(x, x) ** 2                                      # (B,S,S)
         K = torch.softmax(-d2 / (2 * self.sigma ** 2), dim=-1)          # normalised kernel
         return K @ v
@@ -148,7 +149,7 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
     out = poses.clone().to(body.dtype)
     last_free = None          # most recent output pose known to be collision-free
     skipped = []
-    stats = {"previous frame": 0, "last free pose": 0, "jitter": 0, "skipped": 0}
+    stats = {"previous frame": 0, "last free pose": 0, "jitter": 0, "skipped": 0, "failed": 0}
 
     def collides(theta, k):
         return body.count_collisions(body.vertices(theta, sel(betas, k), sel(global_orient, k)))[0] > body.collision_min
@@ -188,8 +189,19 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
             skipped.append(k)
             stats["skipped"] += 1
             continue
-        traj, _ = cloaf_solve(body, field, theta_0, poses[k:k + 1], S,
-                              sel(betas, k), sel(global_orient, k), **solve_kw)
+        reason = None
+        try:
+            traj, _ = cloaf_solve(body, field, theta_0, poses[k:k + 1], S,
+                                  sel(betas, k), sel(global_orient, k), **solve_kw)
+            if not torch.isfinite(traj[-1]).all():
+                reason = "non-finite pose"
+        except (RuntimeError, torch.linalg.LinAlgError) as e:   # numerical failure in this frame
+            reason = type(e).__name__
+        if reason is not None:
+            stats["failed"] += 1
+            if stats["failed"] <= 3:
+                print(f"  frame {k}: integration failed ({reason}), frame left unchanged", flush=True)
+            continue
         out[k] = traj[-1, 0]
         if not collides(out[k:k + 1], k):
             last_free = out[k:k + 1].clone()

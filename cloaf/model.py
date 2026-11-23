@@ -19,6 +19,9 @@ import torch
 import torch.nn as nn
 
 
+DT_MIN = 0.1   # smallest "time left" used to scale velocities (see MotionField.forward)
+
+
 class FourierFeatures(nn.Module):
     def __init__(self, n_freq: int = 20, max_log2: float = 6.0):
         super().__init__()
@@ -74,6 +77,8 @@ class MotionField(nn.Module):
         v = self.point_net(h)
         if x_target is not None:
             # "expected speed": remaining distance / remaining time, averaged over points
-            speed = (x_target - x).norm(dim=-1).mean(-1) / dt.clamp_min(1e-3)   # (B,)
+            # dt >= DT_MIN: training only sees dt >= 1/M = 0.1, while an ODE solver also
+            # evaluates the field at t = 1 (dt = 0), where the speed would blow up
+            speed = (x_target - x).norm(dim=-1).mean(-1) / dt.clamp_min(DT_MIN)   # (B,)
             v = v * speed[:, None, None]
         return v

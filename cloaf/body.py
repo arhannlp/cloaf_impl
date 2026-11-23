@@ -162,7 +162,7 @@ def pinv_solve(J, f, damping: float = 1e-10):
     Least-squares solution via the normal equations with a tiny damping term."""
     J = J.double()
     JtJ = J.transpose(1, 2) @ J
-    lam = damping * JtJ.diagonal(dim1=1, dim2=2).mean(-1, keepdim=True)[..., None]
+    lam = damping * JtJ.diagonal(dim1=1, dim2=2).mean(-1, keepdim=True)[..., None] + 1e-12
     I = torch.eye(J.shape[-1], dtype=J.dtype, device=J.device)
     rhs = J.transpose(1, 2) @ f.double()[..., None]
     return torch.linalg.solve(JtJ + lam * I, rhs)[..., 0]
