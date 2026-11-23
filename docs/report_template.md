@@ -130,7 +130,15 @@ Projection error = ||J J^+ f − f|| / ||f||, the share of the requested point m
 
 Weighting helps for two of the three frames (−26 % to −51 %), hurts the third, and stays far from the free flow. The reason is the requested motion itself: in the free flow the torso surface yields where the arm pushes it, and SMPL has no parameter that dents the torso. However strongly the contact points are weighted, SMPL can only follow an average of their request, and the arm still moves into the torso, only more slowly.
 
-**Extension 2: contact constraint.** Instead of re-weighting the request, forbid the part of the motion that causes the collision: for every pair of sample points on non-adjacent parts closer than 5 cm, their distance may not decrease, n^T (J_i − J_j) dΘ ≥ 0 with n the unit vector between them. Violated pairs are enforced with a large penalty in a few active-set iterations (`body.contact_constrained_solve`); sliding along the contact remains allowed, so SMPL can stop the arm at the torso instead of denting it. Checked on a synthetic case (all approaching pairs stopped). Results on the real body: (to fill in, `--contact_dist 0.05`)
+**Extension 2: contact constraint.** Instead of re-weighting the request, forbid the part of the motion that causes the collision: for every pair of sample points on non-adjacent parts closer than 5 cm, their distance may not decrease, n^T (J_i − J_j) dΘ ≥ 0 with n the unit vector between them. Violated pairs are enforced with a large penalty in a few active-set iterations (`body.contact_constrained_solve`); sliding along the contact remains allowed, so SMPL can stop the arm at the torso instead of denting it. Checked on a synthetic case (all approaching pairs stopped). Result on the real body (smooth_target, frame 45, RK4 10 steps, CPU):
+
+| Frame 45 (target: 296 colliding vertices) | Colliding at the end | Worst along the path | Distance to target | Projection error |
+|---|---|---|---|---|
+| Free flow (reference) | 153 | 153 | 26.8 mm | – |
+| Projected, J^+ (paper) | 328 | 936 | 11.6 mm | 30.6 % |
+| **Projected, contact constraint 5 cm** | **17** | **30** | 115.9 mm | 89.4 % |
+
+The start pose already has 10 colliding vertices, so the constraint creates almost no new collision, along the whole path (38 active constraints on average). It even beats the free flow, where the torso yields to the arm: here the arm is stopped at the contact instead. The price is the distance to the colliding target (116 mm on average over all vertices). Some distance is expected, because the target has the arm 1.2 rad inside the torso, but the average suggests that other body parts move as well to satisfy the constraints; the distance to the clean motion and the animations will tell whether this is a good correction.
 
 ## 6. Observations from the animations
 
