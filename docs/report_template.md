@@ -190,7 +190,25 @@ What the per-frame view shows:
 - **Price**: the correction lasts a few frames longer, so the average distance to the clean motion grows from 11.9 to 14.9 mm.
 - **Remaining problem: jitter inside the window.** The largest jump is now at frame 31, in the middle of the injected collision, where the output switches from 60 to 43 mm away from the clean motion in one frame (the plain `colliding_only` run has a similar peak at frame 29). Each frame is corrected independently and the active contact pairs change from frame to frame, so consecutive frames can land on different solutions. Corrected outputs may also keep up to 50 colliding vertices (the threshold), which then become the start of the next frame.
 
-**Extension 4: temporal smoothing.** After the correction, each modified frame is replaced by a Gaussian-weighted average of the output poses around it (σ in frames), unless the average collides; unmodified frames stay as they are (`--smooth_sigma 1.5`). Results: (to fill in)
+**Extension 4: temporal smoothing.** After the correction, each modified frame is replaced by a Gaussian-weighted average of the output poses around it (σ in frames), unless the average collides; unmodified frames stay as they are (`--smooth_sigma 1.5`).
+
+| | return phase | **+ smoothing σ = 1.5** | + smoothing σ = 3 | all |
+|---|---|---|---|---|
+| Colliding frames | 4 / 60 | **3 / 60** | 3 / 60 | 5 / 60 |
+| Colliding vertices (sum) | 2315 | 1907 | 1646 | 1702 |
+| Distance to the clean motion | 14.9 mm | 15.1 mm | 18.3 mm | 14.2 mm |
+| Mean jerk inside / outside the window | 17.3 / 6.7 mm | **12.3 / 5.9 mm** | 13.8 / 8.8 mm | 14.6 / 11.1 mm |
+| Largest jerk (frame) | 58.8 (31) | 38.2 (38) | 58.4 (22) | 31.6 (45) |
+| Frames smoothed | – | 34 of 34 | 34 of 34 | – |
+
+![Return phase with and without temporal smoothing](figures/jerk_smoothing.png)
+
+- **σ = 1.5 removes the jitter inside the window** (the 59 mm peak at frame 31 is gone) and gives the lowest mean jerk both inside and outside the window. Every smoothed pose was collision-free, so all 34 modified frames were smoothed.
+- **σ = 3 is too strong**: it averages corrected frames with unmodified neighbours over a wider range, which pulls the poses away from the clean motion (18.3 mm) and creates new jumps where the smoothed stretch meets unmodified frames (frames 22 and 43–45).
+- The largest remaining jump (38 mm at frame 38) is at the end of the injected window, where the input itself changes fast (17 mm in the clean motion).
+- **The average distance to the clean motion (15.1 mm) is about that of the input** although the collisions are removed. Inside the injected window the correction halves the distance (input up to 85 mm, corrected about 45 mm); the average is raised by the return phases and by the corrected natural contact in frames 44–54, where the clean motion is the reference.
+
+**Chosen setting**: contact constraint 5 cm, `colliding_only`, return phase (5 mm, decay 0.7), smoothing σ = 1.5.
 
 ## 6. Observations from the animations
 
