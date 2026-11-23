@@ -59,20 +59,21 @@ def bump(n, start, length, amp):
 
 
 @torch.no_grad()
-def corrupt(body, poses, go, start, length, amp):
+def corrupt(body, poses, go, start, length, amp, fixed=None):
     """Try both shoulders, 3 axes, 2 signs; keep the one that creates the most
-    colliding vertices at the peak frame."""
+    colliding vertices at the peak frame. fixed = signed body_pose index (e.g. +50 or -47)
+    skips the search (each try is a collision test, slow on a CPU)."""
     peak = start + length // 2
     best = None
-    for joint in (L_SHOULDER, R_SHOULDER):
-        for axis in range(3):
-            for sign in (1, -1):
-                idx = 3 * (joint - 1) + axis
-                p = poses[peak:peak + 1].clone()
-                p[0, idx] += sign * amp
-                c = body.count_collisions(body.vertices(p, None, go[peak:peak + 1]))[0].item()
-                if best is None or c > best[0]:
-                    best = (c, idx, sign)
+    candidates = [(abs(fixed), 1 if fixed > 0 else -1)] if fixed else [
+        (3 * (joint - 1) + axis, sign) for joint in (L_SHOULDER, R_SHOULDER)
+        for axis in range(3) for sign in (1, -1)]
+    for idx, sign in candidates:
+        p = poses[peak:peak + 1].clone()
+        p[0, idx] += sign * amp
+        c = body.count_collisions(body.vertices(p, None, go[peak:peak + 1]))[0].item()
+        if best is None or c > best[0]:
+            best = (c, idx, sign)
     c, idx, sign = best
     out = poses.clone()
     out[:, idx] += torch.as_tensor(sign * bump(len(poses), start, length, amp), dtype=out.dtype,
@@ -113,6 +114,9 @@ def main():
     ap.add_argument("--corrupt_start", type=int, default=30)
     ap.add_argument("--corrupt_len", type=int, default=30)
     ap.add_argument("--corrupt_amp", type=float, default=1.2)
+    ap.add_argument("--corrupt_index", type=int, default=None,
+                    help="signed body_pose index to rotate, e.g. 50 or -47 (skips the search; "
+                         "the search prints the chosen one)")
     ap.add_argument("--mode", default="all", choices=["all", "colliding_only"])
     ap.add_argument("--solver", default="rk4", choices=["rk4", "dopri5"],
                     help="rk4 = fixed 10 steps (fast); dopri5 = paper's adaptive solver (slow)")
@@ -135,7 +139,8 @@ def main():
     bp, go = load_sequence(a.seq, a.fps, a.start, a.frames)
     clean = torch.as_tensor(bp, device=body.device, dtype=body.dtype)
     go = torch.as_tensor(go, device=body.device, dtype=body.dtype)
-    inp = corrupt(body, clean, go, a.corrupt_start, a.corrupt_len, a.corrupt_amp) if a.corrupt else clean
+    inp = (corrupt(body, clean, go, a.corrupt_start, a.corrupt_len, a.corrupt_amp, a.corrupt_index)
+           if a.corrupt else clean)
 
     if a.field == "point_target":
         field = PointTargetField()

@@ -80,8 +80,14 @@ def main():
     ap.add_argument("--corrupt_start", type=int, default=30)
     ap.add_argument("--corrupt_len", type=int, default=30)
     ap.add_argument("--corrupt_amp", type=float, default=1.2)
+    ap.add_argument("--corrupt_index", type=int, default=None,
+                    help="signed body_pose index to rotate, e.g. 50 or -47 (skips the search; "
+                         "the search prints the chosen one)")
     ap.add_argument("--offsets", default="5,15,25", help="colliding frames tested, from corrupt_start")
     ap.add_argument("--steps", type=int, default=20)
+    ap.add_argument("--checks", type=int, default=10,
+                    help="collision checks along each path (the end is always checked); "
+                         "each check is slow on a CPU, use 2-3 there")
     ap.add_argument("--S", type=int, default=1000)
     ap.add_argument("--collision_min", type=int, default=50)
     ap.add_argument("--contact_weight", type=float, default=0.0,
@@ -96,7 +102,7 @@ def main():
     bp, go = load_sequence(a.seq, 30, 0, a.frames)
     clean = torch.as_tensor(bp, device=body.device, dtype=body.dtype)
     go = torch.as_tensor(go, device=body.device, dtype=body.dtype)
-    inp = corrupt(body, clean, go, a.corrupt_start, a.corrupt_len, a.corrupt_amp)
+    inp = corrupt(body, clean, go, a.corrupt_start, a.corrupt_len, a.corrupt_amp, a.corrupt_index)
 
     kind = a.field if a.field in ("smooth_target", "point_target") else "network"
     net = None
@@ -111,16 +117,21 @@ def main():
     idx = torch.randperm(n_verts, device=body.device, generator=g)[:min(a.S, n_verts)]
     vel = free_velocity(kind, net, a.sigma, idx)
 
+    # start pose: the last collision-free frame before the injected collision
+    # (scan backwards and stop at the first one: collision tests are slow on a CPU)
+    k0, c0 = None, None
     with torch.no_grad():
-        counts = body.count_collisions(body.vertices(inp, None, go))
-    free_frames = [k for k in range(a.corrupt_start) if counts[k] <= a.collision_min]
-    if not free_frames:
+        for k in range(a.corrupt_start - 1, -1, -1):
+            c = int(body.count_collisions(body.vertices(inp[k:k + 1], None, go[k:k + 1]))[0])
+            if c <= a.collision_min:
+                k0, c0 = k, c
+                break
+    if k0 is None:
         raise SystemExit("no collision-free frame before the injected collision; try another sequence")
-    k0 = free_frames[-1]
     print(f"field: {a.field}" + (f" (sigma {a.sigma} m)" if kind == "smooth_target" else "")
           + (f", weighted projection {a.contact_weight:g} (tau {a.contact_tau} m)" if a.contact_weight > 0 else "")
           + (f", contact constraint {a.contact_dist} m" if a.contact_dist > 0 else ""))
-    print(f"start pose: frame {k0} ({int(counts[k0])} colliding vertices)\n")
+    print(f"start pose: frame {k0} ({c0} colliding vertices)\n", flush=True)
     print(f"{'target':>7s} {'Θ1 coll.':>9s} | {'free: coll. end/worst':>21s} {'dist to Θ1':>11s} | "
           f"{'projected: coll. end/worst':>26s} {'dist to Θ1':>11s} {'proj. error':>12s}")
 
@@ -132,7 +143,7 @@ def main():
         with torch.no_grad():
             X0, X1 = body.vertices(th0, None, g_k), body.vertices(th1, None, g_k)
             c1 = int(body.inside(X1[0]).sum())
-            Xf, worst_f = rk4(vel, X0, X1, th0, th1, a.steps, max(1, a.steps // 10), body)
+            Xf, worst_f = rk4(vel, X0, X1, th0, th1, a.steps, max(1, a.steps // max(1, a.checks)), body)
             cf = int(body.inside(Xf[0]).sum())
             df = 1000 * (Xf - X1).norm(dim=-1).mean().item()
 
@@ -140,9 +151,9 @@ def main():
             ode = CLOAFODE(body, proj_field, th1, sample, None, g_k,
                            contact_weight=a.contact_weight, contact_tau=a.contact_tau,
                            contact_dist=a.contact_dist)
-            ts = torch.linspace(0, 1, 11, device=body.device, dtype=body.dtype)
+            ts = torch.linspace(0, 1, max(2, a.checks + 1), device=body.device, dtype=body.dtype)
             traj = odeint(ode, th0, ts, method="rk4", options=dict(step_size=1.0 / a.steps))
-            cp_all = [int(body.inside(body.vertices(traj[i], None, g_k)[0]).sum()) for i in range(len(ts))]
+            cp_all = [int(body.inside(body.vertices(traj[i], None, g_k)[0]).sum()) for i in range(1, len(ts))]
             Xp = body.vertices(traj[-1], None, g_k)
             dp = 1000 * (Xp - X1).norm(dim=-1).mean().item()
             pe = float(np.mean(ode.proj_err))
