@@ -11,7 +11,7 @@ from __future__ import annotations
 import torch
 from torchdiffeq import odeint
 
-from .body import SMPLBody, pinv_solve
+from .body import SMPLBody, contact_constrained_solve, pinv_solve
 from .model import DT_MIN
 
 
@@ -23,7 +23,8 @@ class CLOAFODE(torch.nn.Module):
 
     def __init__(self, body: SMPLBody, field, theta_1, sample, betas=None,
                  global_orient=None, t1: float = 1.0, jac_method="fd",
-                 contact_weight: float = 0.0, contact_tau: float = 0.02):
+                 contact_weight: float = 0.0, contact_tau: float = 0.02,
+                 contact_dist: float = 0.0, contact_mu: float = 1e3):
         super().__init__()
         self.body, self.field, self.sample = body, field, sample
         # Weighted projection (our extension, not in the paper): points close to a
@@ -31,10 +32,15 @@ class CLOAFODE(torch.nn.Module):
         # least-squares projection, so that SMPL follows the motion at contacts first.
         # contact_weight = 0 reproduces the paper's J^+.
         self.contact_weight, self.contact_tau = contact_weight, contact_tau
+        # Contact constraint (our extension): points of non-adjacent parts closer than
+        # contact_dist may not approach each other (see body.contact_constrained_solve).
+        # contact_dist = 0 disables it.
+        self.contact_dist, self.contact_mu = contact_dist, contact_mu
+        self.n_active = []
         self.sample_part = None
-        if contact_weight > 0:
+        if contact_weight > 0 or contact_dist > 0:
             if body._part_test is None:
-                raise ValueError("contact weights need SMPLBody(collision_mode='parts')")
+                raise ValueError("contact weights/constraints need SMPLBody(collision_mode='parts')")
             fidx = sample[0] if sample is not None else None
             verts = body.faces[fidx, 0] if fidx is not None else torch.arange(
                 body.smpl.v_template.shape[0], device=body.device)
@@ -55,8 +61,13 @@ class CLOAFODE(torch.nn.Module):
         f = self.field(x.float(), theta.float(), self.theta_1.float(), dt.float(),
                        x_target=self.x_1.float())                               # [Field velocities]
         f = f.reshape(f.shape[0], -1)
-        w = self.contact_weights(x) if self.contact_weight > 0 else None
-        dtheta = pinv_solve(J, f, weights=w)                                    # [Parametric correction]
+        if self.contact_dist > 0:
+            dtheta, na = contact_constrained_solve(J, f, x, self.far_pairs, self.contact_dist,
+                                                   self.contact_mu)
+            self.n_active.append(sum(na) / len(na))
+        else:
+            w = self.contact_weights(x) if self.contact_weight > 0 else None
+            dtheta = pinv_solve(J, f, weights=w)                                # [Parametric correction]
         with torch.no_grad():
             r = (J.double() @ dtheta[..., None])[..., 0] - f.double()
             self.proj_err.append((r.norm(dim=-1) / f.double().norm(dim=-1).clamp_min(1e-12)).mean().item())

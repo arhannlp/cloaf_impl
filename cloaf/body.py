@@ -157,6 +157,57 @@ class SMPLBody(torch.nn.Module):
         return ((xp - xm) / (2 * eps)).transpose(1, 2)   # (B, 3S, d)
 
 
+def contact_constrained_solve(J, f, x, far_pairs, dist: float = 0.05, mu: float = 1e3,
+                              iters: int = 4, max_pairs: int = 400, damping: float = 1e-10):
+    """Least squares dΘ ≈ J^+ f, but close pairs of points on non-adjacent body parts
+    may not approach each other (our extension, not in the paper).
+
+    For every pair (i, j) closer than `dist` with n = (x_i - x_j)/|x_i - x_j|, the rate of
+    change of their distance is a·dΘ with a = n^T (J_i - J_j). Pairs with a·dΘ < 0 (approaching)
+    become active and a·dΘ = 0 is enforced with a large penalty; repeated `iters` times
+    (a simple active-set scheme). Sliding along the contact stays allowed.
+    J (B,3S,d), f (B,3S), x (B,S,3), far_pairs (S,S) bool. Returns dΘ (B,d) and the number
+    of active constraints per sample."""
+    J = J.double()
+    B, _, d = J.shape
+    S = x.shape[1]
+    Jp = J.reshape(B, S, 3, d)
+    I = torch.eye(d, dtype=J.dtype, device=J.device)
+    out, n_active = [], []
+    for b in range(B):
+        Jb, fb, xb = J[b], f[b].double(), x[b].double()
+        JtJ, rhs = Jb.T @ Jb, Jb.T @ fb
+        scale = JtJ.diagonal().mean()
+        lam = damping * scale + 1e-12
+        D = torch.cdist(xb, xb)
+        D = D.masked_fill(~far_pairs, float("inf"))
+        D = torch.triu(D, diagonal=1) + torch.tril(torch.full_like(D, float("inf")))
+        ii, jj = (D < dist).nonzero(as_tuple=True)
+        if len(ii) > max_pairs:
+            keep = D[ii, jj].argsort()[:max_pairs]
+            ii, jj = ii[keep], jj[keep]
+        dth = torch.linalg.solve(JtJ + lam * I, rhs)
+        if len(ii) == 0:
+            out.append(dth)
+            n_active.append(0)
+            continue
+        n = xb[ii] - xb[jj]
+        n = n / n.norm(dim=-1, keepdim=True).clamp_min(1e-9)
+        A = torch.einsum("pc,pcd->pd", n, Jp[b, ii] - Jp[b, jj])            # (P,d)
+        mu_eff = mu * scale / A.pow(2).sum(-1).mean().clamp_min(1e-12)
+        active = torch.zeros(len(ii), dtype=torch.bool, device=J.device)
+        for _ in range(iters):
+            viol = (A @ dth) < 0
+            if not (viol & ~active).any():
+                break
+            active |= viol
+            Aa = A[active]
+            dth = torch.linalg.solve(JtJ + mu_eff * Aa.T @ Aa + lam * I, rhs)
+        out.append(dth)
+        n_active.append(int(active.sum()))
+    return torch.stack(out), n_active
+
+
 def pinv_solve(J, f, damping: float = 1e-10, weights=None):
     """dΘ = J^† f  (Eq. 5), J: (B,3S,d), f: (B,3S).
     Least-squares solution via the normal equations with a tiny damping term.

@@ -118,7 +118,19 @@ Projection error = ||J J^+ f − f|| / ||f||, the share of the requested point m
 
 **Consequence.** The paper's guarantee holds for the free flow; after the projection it is only approximate, and in our tests it is lost. The paper reports 0.0 % collisions, so either its learned field asks only for motions SMPL can follow at contacts, or its collision measure differs; worth asking the authors.
 
-**Extension tried: weighted projection.** Give points near a non-adjacent body part more weight in the least squares, dΘ = (J^T W J)^-1 J^T W f with w = 1 + λ·exp(−d²/2τ²) (d: distance to the nearest point of a non-adjacent part, τ = 2 cm; λ = 0 is the paper). Results: (to fill in)
+**Extension 1: weighted projection.** Give points near a non-adjacent body part more weight in the least squares, dΘ = (J^T W J)^-1 J^T W f with w = 1 + λ·exp(−d²/2τ²) (d: distance to the nearest point of a non-adjacent part, τ = 2 cm; λ = 0 is the paper). smooth_target field, projected flow, colliding vertices at the end (distance to target):
+
+| λ | Frame 35 (target 651) | Frame 45 (target 296) | Frame 55 (target 923) | Projection error |
+|---|---|---|---|---|
+| 0 (paper) | 562 (3.4 mm) | 334 (11.5 mm) | 918 (5.1 mm) | 17–31 % |
+| 20 | 487 (6.0 mm) | 436 (21.0 mm) | 896 (9.5 mm) | 27–43 % |
+| 100 | 385 (10.5 mm) | 431 (31.8 mm) | 787 (15.9 mm) | 44–64 % |
+| 500 | 318 (15.8 mm) | 445 (48.7 mm) | 686 (23.7 mm) | 60–109 % |
+| free flow (reference) | 22 | 128 | 20 | – |
+
+Weighting helps for two of the three frames (−26 % to −51 %), hurts the third, and stays far from the free flow. The reason is the requested motion itself: in the free flow the torso surface yields where the arm pushes it, and SMPL has no parameter that dents the torso. However strongly the contact points are weighted, SMPL can only follow an average of their request, and the arm still moves into the torso, only more slowly.
+
+**Extension 2: contact constraint.** Instead of re-weighting the request, forbid the part of the motion that causes the collision: for every pair of sample points on non-adjacent parts closer than 5 cm, their distance may not decrease, n^T (J_i − J_j) dΘ ≥ 0 with n the unit vector between them. Violated pairs are enforced with a large penalty in a few active-set iterations (`body.contact_constrained_solve`); sliding along the contact remains allowed, so SMPL can stop the arm at the torso instead of denting it. Checked on a synthetic case (all approaching pairs stopped). Results on the real body: (to fill in, `--contact_dist 0.05`)
 
 ## 6. Observations from the animations
 

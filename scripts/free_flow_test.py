@@ -87,6 +87,8 @@ def main():
     ap.add_argument("--contact_weight", type=float, default=0.0,
                     help="weighted projection (0 = paper's J^+)")
     ap.add_argument("--contact_tau", type=float, default=0.02)
+    ap.add_argument("--contact_dist", type=float, default=0.0,
+                    help="contact constraint distance in m (0 = off, paper)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
 
@@ -116,7 +118,8 @@ def main():
         raise SystemExit("no collision-free frame before the injected collision; try another sequence")
     k0 = free_frames[-1]
     print(f"field: {a.field}" + (f" (sigma {a.sigma} m)" if kind == "smooth_target" else "")
-          + (f", weighted projection {a.contact_weight:g} (tau {a.contact_tau} m)" if a.contact_weight > 0 else ""))
+          + (f", weighted projection {a.contact_weight:g} (tau {a.contact_tau} m)" if a.contact_weight > 0 else "")
+          + (f", contact constraint {a.contact_dist} m" if a.contact_dist > 0 else ""))
     print(f"start pose: frame {k0} ({int(counts[k0])} colliding vertices)\n")
     print(f"{'target':>7s} {'Θ1 coll.':>9s} | {'free: coll. end/worst':>21s} {'dist to Θ1':>11s} | "
           f"{'projected: coll. end/worst':>26s} {'dist to Θ1':>11s} {'proj. error':>12s}")
@@ -135,7 +138,8 @@ def main():
 
             sample = body.sample_surface(a.S, generator=torch.Generator(device=body.device).manual_seed(0))
             ode = CLOAFODE(body, proj_field, th1, sample, None, g_k,
-                           contact_weight=a.contact_weight, contact_tau=a.contact_tau)
+                           contact_weight=a.contact_weight, contact_tau=a.contact_tau,
+                           contact_dist=a.contact_dist)
             ts = torch.linspace(0, 1, 11, device=body.device, dtype=body.dtype)
             traj = odeint(ode, th0, ts, method="rk4", options=dict(step_size=1.0 / a.steps))
             cp_all = [int(body.inside(body.vertices(traj[i], None, g_k)[0]).sum()) for i in range(len(ts))]
@@ -144,7 +148,8 @@ def main():
             pe = float(np.mean(ode.proj_err))
         rows.append((k, c1, cf, worst_f, df, cp_all[-1], max(cp_all), dp, pe))
         print(f"{k:7d} {c1:9d} | {cf:10d} / {worst_f:<8d} {df:9.1f}mm | "
-              f"{cp_all[-1]:14d} / {max(cp_all):<9d} {dp:9.1f}mm {100 * pe:10.1f} %")
+              f"{cp_all[-1]:14d} / {max(cp_all):<9d} {dp:9.1f}mm {100 * pe:10.1f} %"
+              + (f"   active constraints {np.mean(ode.n_active):.0f}" if a.contact_dist > 0 else ""))
 
     print("\nColliding vertices: 'end' at t = 1, 'worst' = maximum along the path.")
     print("Projection error: share of the requested point motion that SMPL cannot follow (mean over steps).")

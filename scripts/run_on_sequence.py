@@ -121,6 +121,9 @@ def main():
                     help="weighted projection: extra weight for points near a non-adjacent part "
                          "(0 = paper's J^+)")
     ap.add_argument("--contact_tau", type=float, default=0.02, help="distance scale (m) of the weights")
+    ap.add_argument("--contact_dist", type=float, default=0.0,
+                    help="contact constraint: points of non-adjacent parts closer than this (m) "
+                         "may not approach (0 = off, paper)")
     ap.add_argument("--collision_min", type=int, default=50,
                     help="a frame collides if MORE than this many vertices collide (0 = paper's @0); "
                          "50 tolerates the light hand-body contact of clean mocap (7.5 %% of clean "
@@ -142,7 +145,8 @@ def main():
         field = MotionField().to(body.device).eval()
         field.load_state_dict(torch.load(a.field, map_location=body.device))
     solve_kw = dict(method="rk4", options=dict(step_size=0.1)) if a.solver == "rk4" else {}
-    solve_kw.update(contact_weight=a.contact_weight, contact_tau=a.contact_tau)
+    solve_kw.update(contact_weight=a.contact_weight, contact_tau=a.contact_tau,
+                    contact_dist=a.contact_dist)
 
     t = time.time()
     out, before = correct_sequence(body, field, inp, None, go, mode=a.mode, S=a.S, progress=True,
@@ -178,7 +182,8 @@ def main():
             fh.write("sequence,mode,solver,collision_min,frames,col_frames_before,col_frames_after,col_verts_before,"
                      "col_verts_after,shift_colliding_mm,shift_clean_mm,dist_clean_input_mm,"
                      "dist_clean_cloaf_mm,jerk_max_input,jerk_max_cloaf,sec_per_frame\n")
-        tag = Path(a.field).stem + (f"+w{a.contact_weight:g}" if a.contact_weight > 0 else "")
+        tag = (Path(a.field).stem + (f"+w{a.contact_weight:g}" if a.contact_weight > 0 else "")
+               + (f"+c{a.contact_dist:g}" if a.contact_dist > 0 else ""))
         fh.write(f"{Path(a.seq).stem}[{tag}],{a.mode},{a.solver},{C},{n},{int(col_frames.sum())},"
                  f"{int((after > C).sum())},{int(before.sum())},{int(after.sum())},"
                  f"{shift[col_frames].mean():.1f},{shift[~col_frames].mean():.1f},{d_in:.1f},{d_out:.1f},"
