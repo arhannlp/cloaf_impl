@@ -79,18 +79,27 @@ Loss compared with two reference fields on the same pose pairs (`scripts/loss_re
 
 ## 5. Results on motion sequences with injected self-intersections
 
-Collisions were injected by smoothly rotating one shoulder into the torso over 30 frames of clean AMASS motion, so the clean motion is known.
+Collisions were injected by smoothly rotating one shoulder into the torso over 30 frames (frames 30–59) of clean AMASS motion, so the clean motion is known. Test sequence: SFU `0005_2FeetJump001` (held out from training), 90 frames at 30 fps, injection +1.2 rad on `body_pose[50]` (295 colliding vertices at the peak frame). A frame counts as colliding with more than 50 colliding vertices. Solver: RK4, 10 steps. Network after 4000 iterations.
 
-(paste `results/summary_runs.csv`)
+| Field | Mode | Colliding frames before → after | Colliding vertices (sum) before → after | Dist. to clean motion (mm) input → CLOAF | Max jerk (mm) input → CLOAF | s/frame |
+|---|---|---|---|---|---|---|
+| Network | all | 49 → 14 | 15811 → 6914 | 14.9 → 524.3 | 18.1 → 1998.6 | 2.57 |
+| Network | colliding_only | 49 → 38 | 15811 → 21712 | 14.9 → 207.4 | 18.1 → 2451.1 | 1.51 |
+| smooth_target (σ = 3 cm) | all | 49 → 46 | 15811 → 16249 | 14.9 → 15.8 | 18.1 → 18.0 | 2.60 |
+| point_target (Supp. C) | all | 49 → 48 | 15811 → 16169 | 14.9 → 16.0 | 18.1 → 17.7 | 2.59 |
 
-| Sequence | Field | Mode | Colliding frames before → after | Dist. to clean (mm) input → CLOAF | Max jerk input → CLOAF |
-|---|---|---|---|---|---|
-| | point_target | all | | | |
-| | smooth_target | all | | | |
-| | network | all | | | |
-| | network | colliding_only | | | |
+Start poses used (network, all): previous frame 75, last collision-free pose 11, skipped 4 (frames 0–3 already collide in the clean motion and no collision-free start was found).
+
+### What the numbers say
+
+1. **The network removes collisions only by destroying the pose.** In `all` mode the colliding frames drop from 49 to 14, but the body moves on average half a metre away from the clean motion and jumps by up to 2 m between frames. This is not a correction.
+   Likely causes: (a) the network is under-trained (loss 0.50x of a zero field vs 0.06x for the point-target reference); (b) the test situations are outside the training distribution: training pairs are at most 4 frames apart and clean, while here the start pose can be the last collision-free frame many frames back and the target has a shoulder bent by 1.2 rad; (c) with successive frames, every error is carried into the next frame.
+2. **The training-free fields do not remove collisions.** They move the body by only a few millimetres: each point is driven to its position in the target pose, so the integration ends at the colliding target. The non-intersection argument holds for points that move freely; after the least-squares projection onto SMPL (J^†) the torso cannot "dent" where the arm pushes, and the arm ends up inside it anyway. The same effect appeared in the simple target-field test (Sec. 2: 0 → 7 colliding vertices).
+3. **The clean motion itself collides.** 19 frames outside the injected window exceed 50 colliding vertices (hands close to the body during the jump), and the first 4 frames have no collision-free start pose. This sequence is harder than expected as a test case.
 
 ## 6. Observations from the animations
+
+(watch `*_net_all.npz`, `*_net_colliding_only.npz`, `*_smooth_target_all.npz` with `scripts/view_results.py`)
 
 - Which intersections are corrected:
 - Where the movement changes in an undesirable way:
@@ -99,12 +108,15 @@ Collisions were injected by smoothly rotating one shoulder into the torso over 3
 
 ## 7. Limitations and open questions
 
-- The network was trained for hours on one AMASS subset; the paper trained on all of AMASS on an A100.
-- The guarantee is approximate: velocities are projected onto SMPL with J^† (least squares).
-- Details the paper does not specify (see README, "Ambiguities"): collision detection, network size, training settings, crotch/armpit mask.
+- Training: about 1.5 h on a Colab T4 (4000 iterations, ACCAD only) in float32. The paper trained on all of AMASS on an A100 in float64; training length is not reported.
+- Training distribution: pose pairs 1–4 frames apart from clean mocap. Correction needs larger gaps and colliding targets; the paper does not say whether it trains on such pairs.
+- The non-intersection guarantee is only approximate after projecting the velocities onto SMPL with J^† (least squares); in our tests this is enough to leave the collisions in place.
+- Details the paper does not specify (see README, "Ambiguities"): collision detection, network size and inputs, training settings, crotch/armpit mask, solver tolerances.
 
 ## 8. Next steps
 
-1. Run HMR2.0 on 3DPW-test; calibrate the collision detector against Table 1 (HMR2.0 Col@0 = 39.2 %).
-2. CLOAF on 3DPW: reproduce Table 2 (82.3 / 53.2 / 9.4 / 0.0 %) and Table 4.
-3. Extension: systematic comparison of `all` vs `colliding_only`, focusing on transitions.
+1. Train longer and on more data (all of AMASS, ideally on a university GPU), and with larger frame gaps so that the network sees start/target pairs like those met during correction; check whether the loss reaches the point-target level.
+2. Contact the authors for code or a checkpoint, to separate implementation issues from training issues.
+3. Run HMR2.0 on 3DPW-test; calibrate the collision detector against Table 1 (HMR2.0 Col@0 = 39.2 %).
+4. CLOAF on 3DPW: reproduce Table 2 (82.3 / 53.2 / 9.4 / 0.0 %) and Table 4.
+5. Extension: systematic comparison of `all` vs `colliding_only`, focusing on transitions, once the field works.
