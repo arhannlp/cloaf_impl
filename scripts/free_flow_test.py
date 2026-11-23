@@ -84,6 +84,9 @@ def main():
     ap.add_argument("--steps", type=int, default=20)
     ap.add_argument("--S", type=int, default=1000)
     ap.add_argument("--collision_min", type=int, default=50)
+    ap.add_argument("--contact_weight", type=float, default=0.0,
+                    help="weighted projection (0 = paper's J^+)")
+    ap.add_argument("--contact_tau", type=float, default=0.02)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
 
@@ -112,7 +115,8 @@ def main():
     if not free_frames:
         raise SystemExit("no collision-free frame before the injected collision; try another sequence")
     k0 = free_frames[-1]
-    print(f"field: {a.field}" + (f" (sigma {a.sigma} m)" if kind == "smooth_target" else ""))
+    print(f"field: {a.field}" + (f" (sigma {a.sigma} m)" if kind == "smooth_target" else "")
+          + (f", weighted projection {a.contact_weight:g} (tau {a.contact_tau} m)" if a.contact_weight > 0 else ""))
     print(f"start pose: frame {k0} ({int(counts[k0])} colliding vertices)\n")
     print(f"{'target':>7s} {'Θ1 coll.':>9s} | {'free: coll. end/worst':>21s} {'dist to Θ1':>11s} | "
           f"{'projected: coll. end/worst':>26s} {'dist to Θ1':>11s} {'proj. error':>12s}")
@@ -130,7 +134,8 @@ def main():
             df = 1000 * (Xf - X1).norm(dim=-1).mean().item()
 
             sample = body.sample_surface(a.S, generator=torch.Generator(device=body.device).manual_seed(0))
-            ode = CLOAFODE(body, proj_field, th1, sample, None, g_k)
+            ode = CLOAFODE(body, proj_field, th1, sample, None, g_k,
+                           contact_weight=a.contact_weight, contact_tau=a.contact_tau)
             ts = torch.linspace(0, 1, 11, device=body.device, dtype=body.dtype)
             traj = odeint(ode, th0, ts, method="rk4", options=dict(step_size=1.0 / a.steps))
             cp_all = [int(body.inside(body.vertices(traj[i], None, g_k)[0]).sum()) for i in range(len(ts))]

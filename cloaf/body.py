@@ -157,12 +157,17 @@ class SMPLBody(torch.nn.Module):
         return ((xp - xm) / (2 * eps)).transpose(1, 2)   # (B, 3S, d)
 
 
-def pinv_solve(J, f, damping: float = 1e-10):
+def pinv_solve(J, f, damping: float = 1e-10, weights=None):
     """dΘ = J^† f  (Eq. 5), J: (B,3S,d), f: (B,3S).
-    Least-squares solution via the normal equations with a tiny damping term."""
+    Least-squares solution via the normal equations with a tiny damping term.
+    weights (B,S) or None: weighted least squares dΘ = (J^T W J)^-1 J^T W f,
+    W = one weight per point, repeated over its x, y, z rows (None = paper)."""
     J = J.double()
-    JtJ = J.transpose(1, 2) @ J
+    Jt = J.transpose(1, 2)
+    if weights is not None:
+        Jt = Jt * weights.double().repeat_interleave(3, dim=-1)[:, None, :]
+    JtJ = Jt @ J
     lam = damping * JtJ.diagonal(dim1=1, dim2=2).mean(-1, keepdim=True)[..., None] + 1e-12
     I = torch.eye(J.shape[-1], dtype=J.dtype, device=J.device)
-    rhs = J.transpose(1, 2) @ f.double()[..., None]
+    rhs = Jt @ f.double()[..., None]
     return torch.linalg.solve(JtJ + lam * I, rhs)[..., 0]

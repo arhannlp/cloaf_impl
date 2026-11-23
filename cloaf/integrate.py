@@ -22,9 +22,24 @@ class CLOAFODE(torch.nn.Module):
     """Velocity in Θ space: J^† f. Solved with torchdiffeq.odeint."""
 
     def __init__(self, body: SMPLBody, field, theta_1, sample, betas=None,
-                 global_orient=None, t1: float = 1.0, jac_method="fd"):
+                 global_orient=None, t1: float = 1.0, jac_method="fd",
+                 contact_weight: float = 0.0, contact_tau: float = 0.02):
         super().__init__()
         self.body, self.field, self.sample = body, field, sample
+        # Weighted projection (our extension, not in the paper): points close to a
+        # non-adjacent body part get weight 1 + contact_weight * exp(-d^2 / 2 tau^2) in the
+        # least-squares projection, so that SMPL follows the motion at contacts first.
+        # contact_weight = 0 reproduces the paper's J^+.
+        self.contact_weight, self.contact_tau = contact_weight, contact_tau
+        self.sample_part = None
+        if contact_weight > 0:
+            if body._part_test is None:
+                raise ValueError("contact weights need SMPLBody(collision_mode='parts')")
+            fidx = sample[0] if sample is not None else None
+            verts = body.faces[fidx, 0] if fidx is not None else torch.arange(
+                body.smpl.v_template.shape[0], device=body.device)
+            self.sample_part = body._part_test.vertex_part[verts]              # (S,)
+            self.far_pairs = ~body._part_test.near[self.sample_part][:, self.sample_part]  # (S,S)
         self.theta_1, self.betas, self.go, self.t1 = theta_1, betas, global_orient, t1
         self.jac_method = jac_method
         self.nfe = 0  # number of function evaluations (solver steps)
@@ -40,11 +55,20 @@ class CLOAFODE(torch.nn.Module):
         f = self.field(x.float(), theta.float(), self.theta_1.float(), dt.float(),
                        x_target=self.x_1.float())                               # [Field velocities]
         f = f.reshape(f.shape[0], -1)
-        dtheta = pinv_solve(J, f)                                               # [Parametric correction]
+        w = self.contact_weights(x) if self.contact_weight > 0 else None
+        dtheta = pinv_solve(J, f, weights=w)                                    # [Parametric correction]
         with torch.no_grad():
             r = (J.double() @ dtheta[..., None])[..., 0] - f.double()
             self.proj_err.append((r.norm(dim=-1) / f.double().norm(dim=-1).clamp_min(1e-12)).mean().item())
         return dtheta
+
+
+    @torch.no_grad()
+    def contact_weights(self, x):
+        """(B,S) weights: large for points near a non-adjacent body part."""
+        d = torch.cdist(x.float(), x.float())                                  # (B,S,S)
+        d = d.masked_fill(~self.far_pairs[None], float("inf")).min(-1).values  # nearest far point
+        return 1.0 + self.contact_weight * torch.exp(-d ** 2 / (2 * self.contact_tau ** 2))
 
 
 @torch.no_grad()

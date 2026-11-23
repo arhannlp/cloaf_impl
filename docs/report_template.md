@@ -97,6 +97,29 @@ Start poses used (network, all): previous frame 75, last collision-free pose 11,
 2. **The training-free fields do not remove collisions.** They move the body by only a few millimetres: each point is driven to its position in the target pose, so the integration ends at the colliding target. The non-intersection argument holds for points that move freely; after the least-squares projection onto SMPL (J^†) the torso cannot "dent" where the arm pushes, and the arm ends up inside it anyway. The same effect appeared in the simple target-field test (Sec. 2: 0 → 7 colliding vertices).
 3. **The clean motion itself collides.** 19 frames outside the injected window exceed 50 colliding vertices (hands close to the body during the jump), and the first 4 frames have no collision-free start pose. This sequence is harder than expected as a test case.
 
+## 5b. Where the guarantee breaks: free flow vs projected flow
+
+`scripts/free_flow_test.py` integrates the same field twice from the last collision-free frame (29, 10 colliding vertices) towards three colliding frames of the same sequence: once with all 6890 vertices moving freely (no SMPL, as in Eq. 1), once projected onto SMPL with J^+ (Eq. 6). RK4, 20 steps.
+
+| Field | Target frame | Colliding vertices in target | Free flow: at end (dist. to target) | Projected flow: at end (dist. to target) | Projection error |
+|---|---|---|---|---|---|
+| smooth_target (σ = 3 cm) | 35 | 651 | **22** (3.9 mm) | 562 (3.4 mm) | 16.7 % |
+| smooth_target | 45 | 296 | **128** (26.0 mm) | 334 (11.5 mm) | 31.1 % |
+| smooth_target | 55 | 923 | **20** (6.6 mm) | 918 (5.1 mm) | 17.9 % |
+| point_target (control) | 35 / 45 / 55 | 651 / 296 / 923 | 619 / 309 / 927 | 619 / 311 / 928 | 3–12 % |
+| network (4000 it.) | 35 / 45 / 55 | 651 / 296 / 923 | 17 / 111 / 33 (113 / 379 / 128 mm) | 0 / 639 / 0 (81 / 359 / 245 mm) | 68–77 % |
+
+Projection error = ||J J^+ f − f|| / ||f||, the share of the requested point motion that SMPL cannot follow.
+
+- **The flow itself works.** With a field that is a function of position (smooth_target), freely moving points avoid 57–98 % of the collisions while staying within a few millimetres of the target: trajectories cannot cross, as Eq. 1 promises. This also confirms that the collision test behaves as intended.
+- **The projection onto SMPL undoes it.** Projected with J^+, the same field reaches almost all of the target's collisions. SMPL cannot follow 17–31 % of the requested motion, and what it drops is the shared motion of the few points at the contact: they are a small fraction of the 1000 samples, so the least-squares fit ignores them.
+- The control behaves as expected: point_target is not a function of position (each point has its own target), so it keeps the collisions with or without projection.
+- The network asks for motions SMPL cannot perform (68–77 % projection error) and does not reach the target even in free flow: it is under-trained, independently of the projection issue.
+
+**Consequence.** The paper's guarantee holds for the free flow; after the projection it is only approximate, and in our tests it is lost. The paper reports 0.0 % collisions, so either its learned field asks only for motions SMPL can follow at contacts, or its collision measure differs; worth asking the authors.
+
+**Extension tried: weighted projection.** Give points near a non-adjacent body part more weight in the least squares, dΘ = (J^T W J)^-1 J^T W f with w = 1 + λ·exp(−d²/2τ²) (d: distance to the nearest point of a non-adjacent part, τ = 2 cm; λ = 0 is the paper). Results: (to fill in)
+
 ## 6. Observations from the animations
 
 (watch `*_net_all.npz`, `*_net_colliding_only.npz`, `*_smooth_target_all.npz` with `scripts/view_results.py`)

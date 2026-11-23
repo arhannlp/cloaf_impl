@@ -83,6 +83,7 @@ class PartCollisionTest:
         near = torch.eye(n, dtype=torch.bool, device=faces.device)
         for a, b in PART_ADJACENT:
             near[a, b] = near[b, a] = True
+        self.near = near                                   # (n_parts, n_parts): same or adjacent
         self.thresh = thresh
         self.groups = []
         for p in range(n):
