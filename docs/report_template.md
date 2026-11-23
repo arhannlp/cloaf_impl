@@ -160,7 +160,20 @@ Time per frame on a T4: 1.3 s (colliding_only, no constraint), 2.7 s (all); 46 s
 - **The trade-off the project asks about is visible**:
   - `colliding_only` preserves the original motion best (closest to the clean motion, clean frames untouched) but has the largest jump (63 mm), presumably at the transitions between corrected and kept frames.
   - `all` halves the largest jump (32 mm) but also moves frames that did not need it (8.2 mm on average) and ends further from the clean motion (14.2 mm).
-- **Jitter inside the corrected window**: the mean jerk is 12.4 mm in both modes (5.0 in the input), so the motion is also less smooth inside the window, not only at its borders. Each frame is corrected independently and the set of active contact constraints changes from frame to frame, which likely produces a stop-and-go motion at the contact. To check with the per-frame jerk (`scripts/plot_jerk.py`) and the animations.
+- **Jitter inside the corrected window**: the mean jerk is 12.4 mm in both modes (5.0 in the input), so the motion is also less smooth inside the window, not only at its borders.
+
+![Per-frame jerk, distance to the clean motion and colliding vertices](figures/jerk_jump_constraint.png)
+
+*Per frame (`scripts/plot_jerk.py`): jerk, distance to the clean motion, colliding vertices. Shaded: injected collision (frames 20–39).*
+
+What the per-frame view shows:
+
+- **Inside the window both constrained modes work**: the input drifts up to 85 mm from the clean motion, the constrained outputs stay at 30–46 mm with almost no colliding vertices. The paper's projection (green) follows the input and keeps the collisions.
+- **`colliding_only`: the largest jumps are at the transitions.** The peaks at frames 50 (63 mm) and 55 (42 mm) are in a stretch where the clean motion itself collides (frames 44–54, about 150 vertices) and is therefore corrected. When the correction stops, the output falls back from 30 mm to 0 mm away from the input in a single frame (frame 49): this is the "sudden change between frames" the project description anticipates. The peak at frame 38 is the end of the injected window.
+- **`all`: no jump back, but drift.** Every frame starts from the previous output and the flow does not quite reach its target (projection error), so the error accumulates: after the window the output never returns to the input, and the distance to the clean motion grows to 30 mm by the end. Frames before the window are moved as well (3–7 mm).
+- **Open question**: the collision in the clean motion at frames 44–54 may be a natural contact rather than an error; with the 50-vertex threshold it is corrected.
+
+**Extension 3: fading the correction out (return phase).** To avoid the jump back in `colliding_only` without the drift of `all`: after a corrected stretch, keep the last correction offset Δ = Θ_out − Θ_in and add it to the following collision-free frames, shrunk by a factor (0.7) every frame, until its effect is below 5 mm (mean vertex distance); if a faded pose collides, that frame is corrected with CLOAF as usual (`--return_eps 0.005`). Results: (to fill in)
 
 ## 6. Observations from the animations
 

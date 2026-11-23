@@ -125,6 +125,11 @@ def main():
                     help="weighted projection: extra weight for points near a non-adjacent part "
                          "(0 = paper's J^+)")
     ap.add_argument("--contact_tau", type=float, default=0.02, help="distance scale (m) of the weights")
+    ap.add_argument("--return_eps", type=float, default=None,
+                    help="colliding_only: after a corrected stretch, fade the correction out "
+                         "(x return_decay per frame) until it is below this distance (m, e.g. 0.005), "
+                         "instead of jumping back to the input in one frame")
+    ap.add_argument("--return_decay", type=float, default=0.7)
     ap.add_argument("--contact_dist", type=float, default=0.0,
                     help="contact constraint: points of non-adjacent parts closer than this (m) "
                          "may not approach (0 = off, paper)")
@@ -155,7 +160,7 @@ def main():
 
     t = time.time()
     out, before = correct_sequence(body, field, inp, None, go, mode=a.mode, S=a.S, progress=True,
-                                   **solve_kw)
+                                   return_eps=a.return_eps, return_decay=a.return_decay, **solve_kw)
     secs = time.time() - t
     with torch.no_grad():
         after = body.count_collisions(body.vertices(out, None, go))
@@ -188,7 +193,8 @@ def main():
                      "col_verts_after,shift_colliding_mm,shift_clean_mm,dist_clean_input_mm,"
                      "dist_clean_cloaf_mm,jerk_max_input,jerk_max_cloaf,sec_per_frame\n")
         tag = (Path(a.field).stem + (f"+w{a.contact_weight:g}" if a.contact_weight > 0 else "")
-               + (f"+c{a.contact_dist:g}" if a.contact_dist > 0 else ""))
+               + (f"+c{a.contact_dist:g}" if a.contact_dist > 0 else "")
+               + (f"+r{a.return_eps:g}" if a.return_eps else ""))
         fh.write(f"{Path(a.seq).stem}[{tag}],{a.mode},{a.solver},{C},{n},{int(col_frames.sum())},"
                  f"{int((after > C).sum())},{int(before.sum())},{int(after.sum())},"
                  f"{shift[col_frames].mean():.1f},{shift[~col_frames].mean():.1f},{d_in:.1f},{d_out:.1f},"

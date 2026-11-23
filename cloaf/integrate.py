@@ -176,11 +176,18 @@ class TargetField(torch.nn.Module):
 # ====================================================================== #
 @torch.no_grad()
 def correct_sequence(body, field, poses, betas=None, global_orient=None,
-                     mode="all", init_strategy="jitter", S=1000, progress=False, **solve_kw):
+                     mode="all", init_strategy="jitter", S=1000, progress=False,
+                     return_eps=None, return_decay=0.7, **solve_kw):
     """
     poses : (N,69) estimated poses (may contain collisions)
     mode  : "all"            -> paper: every frame, Θ0 = previous corrected, Θ1 = estimate
             "colliding_only" -> extension: collision-free frames are kept unchanged
+    return_eps (m, colliding_only only): "return phase" (our extension). After a corrected
+            stretch, the following collision-free frames are not reset to the input at once:
+            they keep the last correction offset Δ = Θ_out - Θ_in, shrunk by return_decay every
+            frame (Θ = Θ_in + decay^j Δ), until its effect is below return_eps (mean vertex
+            distance) or the next collision. A pose of the return phase that collides is
+            corrected with CLOAF as usual. None = off (jump back in one frame).
     Returns: (N,69) corrected poses, (N,) collision counts before correction
     """
     N = poses.shape[0]
@@ -190,7 +197,10 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
     out = poses.clone().to(body.dtype)
     last_free = None          # most recent output pose known to be collision-free
     skipped = []
-    stats = {"previous frame": 0, "last free pose": 0, "jitter": 0, "skipped": 0, "failed": 0}
+    stats = {"previous frame": 0, "last free pose": 0, "jitter": 0, "skipped": 0, "failed": 0,
+             "return phase": 0}
+    returning = False          # inside a return phase (see return_eps)
+    offset, j_ret = None, 0    # last correction offset in Θ, frames since the last correction
 
     def collides(theta, k):
         return body.count_collisions(body.vertices(theta, sel(betas, k), sel(global_orient, k)))[0] > body.collision_min
@@ -219,8 +229,22 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
         if progress and k % 10 == 0:
             print(f"  frame {k}/{N} ({time.time() - t_start:.0f} s)", flush=True)
         if mode == "colliding_only" and counts[k] <= body.collision_min:
-            last_free = out[k:k + 1].clone()          # keep the original frame
-            continue
+            if returning:
+                j_ret += 1
+                cand = poses[k:k + 1].to(body.dtype) + return_decay ** j_ret * offset
+                gap = (body.vertices(cand, sel(betas, k), sel(global_orient, k))
+                       - verts[k:k + 1]).norm(dim=-1).mean().item()
+                if gap <= return_eps:
+                    returning = False                 # close enough: back to the input
+                elif not collides(cand, k):
+                    out[k] = cand[0]                  # decayed correction, collision-free
+                    last_free = cand.clone()
+                    stats["return phase"] += 1
+                    continue
+                # else: the decayed pose collides -> correct this frame with CLOAF below
+            if not returning:
+                last_free = out[k:k + 1].clone()      # keep the original frame
+                continue
         if k == 0 and counts[0] <= body.collision_min:
             last_free = out[0:1].clone()              # nothing to correct, start from here
             continue
@@ -244,6 +268,9 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
                 print(f"  frame {k}: integration failed ({reason}), frame left unchanged", flush=True)
             continue
         out[k] = traj[-1, 0]
+        if return_eps is not None and mode == "colliding_only":
+            returning, j_ret = True, 0                # return to the input gradually afterwards
+            offset = out[k:k + 1] - poses[k:k + 1].to(body.dtype)
         if not collides(out[k:k + 1], k):
             last_free = out[k:k + 1].clone()
     if progress:
