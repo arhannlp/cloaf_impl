@@ -47,23 +47,24 @@ Colliding vertices grow from 0 to 7 while the arm is raised. Only the hand regio
 
 The paper does not say how self-intersections are counted. On 200 random clean AMASS (ACCAD) frames:
 
-| Test | Col@0 | Col@100 | Mean colliding vertices |
-|---|---|---|---|
-| Full mesh (vertex inside the body), rest-pose vertices ignored | 100 % | 66.0 % | 149.8 |
-| Full mesh, + crotch/armpit ignored | 100 % | 32.5 % | 96.4 |
-| Non-adjacent parts only, rest-pose vertices ignored | 38.5 % | 4.5 % | 22.5 |
-| **Non-adjacent parts only, + crotch/armpit ignored (used)** | **30.0 %** | **4.5 %** | **21.2** |
+| Test | @0 | @10 | @20 | @50 | @100 | Mean colliding vertices |
+|---|---|---|---|---|---|---|
+| Full mesh (vertex inside the body), rest-pose vertices ignored | 100 % | 93.5 % | 90.5 % | 80.5 % | 66.0 % | 149.8 |
+| Full mesh, + crotch/armpit ignored | 100 % | 93.0 % | 87.5 % | 70.5 % | 32.5 % | 96.4 |
+| Non-adjacent parts only, rest-pose vertices ignored | 38.5 % | 19.5 % | 14.5 % | 8.0 % | 4.5 % | 22.5 |
+| **Non-adjacent parts only, + crotch/armpit ignored (used)** | **30.0 %** | **15.0 %** | **14.5 %** | **7.5 %** | **4.5 %** | **21.2** |
 
 - Counting every vertex inside the body flags every clean frame: adjacent parts (upper arm against torso, forearm against upper arm) always overlap slightly in SMPL. We therefore count only vertices inside a non-adjacent body part, as SMPLify-X / TUCH do.
 - The remaining hits on clean mocap are mostly hands (r_hand 2054, l_hand 1519 vertices over 200 frames): hands resting on the body. AMASS finger poses are dropped when converting SMPL+H to SMPL, so the hands are flat and sink slightly into the surface they touch.
 - Col@0 is therefore very sensitive to light contact: 30 % on clean mocap, the same order as the paper's 39.2 % for HMR2.0 on 3DPW. Deep penetrations (Col@100) are rare on clean mocap (4.5 %).
-- For sequence correction we treat a frame as colliding only above a small threshold (`collision_min`, default 20 vertices).
+- For sequence correction we treat a frame as colliding only with more than 50 colliding vertices (`collision_min`): this flags 7.5 % of clean frames instead of 30 %, while the injected collisions reach 500+ vertices.
 
 ## 4. Training
 
 - Data: AMASS ACCAD, ~48k frames at 30 fps; test sequences from SFU (not used for training)
 - Hardware: Colab T4 GPU. float32 with forward-mode AD for the Jacobian (the paper uses float64; on a T4 float64 was 5x slower: 6.6 vs 1.34 s/iteration)
-- Settings the paper does not give, chosen here: hidden width 256, LeakyReLU, per-point network, batch 16, M = 10 Euler steps, frame gap 1–4, lr 1e-4 for 2000 iterations, then 3e-4
+- Settings the paper does not give, chosen here: hidden width 256, LeakyReLU, per-point network, batch 16, M = 10 Euler steps, frame gap 1–4
+- Learning rate: 1e-4 for iterations 0–2000, 3e-4 for 2000–4000 (loss first rose, then fell below the earlier level), then back to 1e-4
 - Loss curve: (insert plot)
 
 Loss compared with two reference fields on the same pose pairs (`scripts/loss_reference.py`):
@@ -71,7 +72,8 @@ Loss compared with two reference fields on the same pose pairs (`scripts/loss_re
 | Field | Loss after 2000 iterations | vs zero field |
 |---|---|---|
 | Zero field (body does not move) | 9.9e-4 | 1.00x |
-| **Network** | **5.5e-4** | **0.56x** |
+| Network, 2000 iterations | 5.5e-4 | 0.56x |
+| **Network, 4000 iterations** | **4.9e-4** | **0.50x** |
 | Point target (each point straight to its target) | 5.9e-5 | 0.06x |
 | Network, end of training | | |
 

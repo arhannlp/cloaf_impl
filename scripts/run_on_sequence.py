@@ -117,9 +117,10 @@ def main():
     ap.add_argument("--solver", default="rk4", choices=["rk4", "dopri5"],
                     help="rk4 = fixed 10 steps (fast); dopri5 = paper's adaptive solver (slow)")
     ap.add_argument("--S", type=int, default=1000)
-    ap.add_argument("--collision_min", type=int, default=20,
+    ap.add_argument("--collision_min", type=int, default=50,
                     help="a frame collides if MORE than this many vertices collide (0 = paper's @0); "
-                         "20 tolerates light hand-body contact that clean mocap has")
+                         "50 tolerates the light hand-body contact of clean mocap (7.5 %% of clean "
+                         "ACCAD frames exceed 50, 30 %% exceed 0)")
     ap.add_argument("--out", default="results/sequence.npz")
     a = ap.parse_args()
 
