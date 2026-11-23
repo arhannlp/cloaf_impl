@@ -173,7 +173,24 @@ What the per-frame view shows:
 - **`all`: no jump back, but drift.** Every frame starts from the previous output and the flow does not quite reach its target (projection error), so the error accumulates: after the window the output never returns to the input, and the distance to the clean motion grows to 30 mm by the end. Frames before the window are moved as well (3–7 mm).
 - **Open question**: the collision in the clean motion at frames 44–54 may be a natural contact rather than an error; with the 50-vertex threshold it is corrected.
 
-**Extension 3: fading the correction out (return phase).** To avoid the jump back in `colliding_only` without the drift of `all`: after a corrected stretch, keep the last correction offset Δ = Θ_out − Θ_in and add it to the following collision-free frames, shrunk by a factor (0.7) every frame, until its effect is below 5 mm (mean vertex distance); if a faded pose collides, that frame is corrected with CLOAF as usual (`--return_eps 0.005`). Results: (to fill in)
+**Extension 3: fading the correction out (return phase).** To avoid the jump back in `colliding_only` without the drift of `all`: after a corrected stretch, keep the last correction offset Δ = Θ_out − Θ_in and add it to the following collision-free frames, shrunk by a factor (0.7) every frame, until its effect is below 5 mm (mean vertex distance); if a faded pose collides, that frame is corrected with CLOAF as usual (`--return_eps 0.005`).
+
+| | colliding_only | + return phase | all |
+|---|---|---|---|
+| Colliding frames | 3 / 60 | 4 / 60 | 5 / 60 |
+| Distance to the clean motion | **11.9 mm** | 14.9 mm | 14.2 mm |
+| Mean jerk outside / inside the window | 10.3 / 16.2 mm | **6.7** / 17.3 mm | 11.1 / **14.6** mm |
+| Largest jerk (frame) | 63.0 (50) | 58.8 (31) | **31.6** (45) |
+| Clean frames moved | 0 | 4.0 mm (return phases) | 8.2 mm |
+
+![colliding_only, with return phase, and all](figures/jerk_return_phase.png)
+
+- **The jumps at the transitions are gone**: the peaks at frames 50 and 55 disappear and the mean jerk outside the window drops to 6.7 mm, the lowest of the three.
+- **No drift**: after each return phase (7 frames in total) the output is back on the input (frames 42 and 57), unlike `all`.
+- **Price**: the correction lasts a few frames longer, so the average distance to the clean motion grows from 11.9 to 14.9 mm.
+- **Remaining problem: jitter inside the window.** The largest jump is now at frame 31, in the middle of the injected collision, where the output switches from 60 to 43 mm away from the clean motion in one frame (the plain `colliding_only` run has a similar peak at frame 29). Each frame is corrected independently and the active contact pairs change from frame to frame, so consecutive frames can land on different solutions. Corrected outputs may also keep up to 50 colliding vertices (the threshold), which then become the start of the next frame.
+
+**Extension 4: temporal smoothing.** After the correction, each modified frame is replaced by a Gaussian-weighted average of the output poses around it (σ in frames), unless the average collides; unmodified frames stay as they are (`--smooth_sigma 1.5`). Results: (to fill in)
 
 ## 6. Observations from the animations
 

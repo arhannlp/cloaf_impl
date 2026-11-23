@@ -177,7 +177,7 @@ class TargetField(torch.nn.Module):
 @torch.no_grad()
 def correct_sequence(body, field, poses, betas=None, global_orient=None,
                      mode="all", init_strategy="jitter", S=1000, progress=False,
-                     return_eps=None, return_decay=0.7, **solve_kw):
+                     return_eps=None, return_decay=0.7, smooth_sigma=None, **solve_kw):
     """
     poses : (N,69) estimated poses (may contain collisions)
     mode  : "all"            -> paper: every frame, Θ0 = previous corrected, Θ1 = estimate
@@ -188,6 +188,9 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
             frame (Θ = Θ_in + decay^j Δ), until its effect is below return_eps (mean vertex
             distance) or the next collision. A pose of the return phase that collides is
             corrected with CLOAF as usual. None = off (jump back in one frame).
+    smooth_sigma (frames): temporal smoothing after the correction (our extension). Every
+            modified frame is replaced by a Gaussian-weighted average of the output poses around
+            it, unless that average collides. Unmodified frames stay as they are. None = off.
     Returns: (N,69) corrected poses, (N,) collision counts before correction
     """
     N = poses.shape[0]
@@ -198,7 +201,7 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
     last_free = None          # most recent output pose known to be collision-free
     skipped = []
     stats = {"previous frame": 0, "last free pose": 0, "jitter": 0, "skipped": 0, "failed": 0,
-             "return phase": 0}
+             "return phase": 0, "smoothed": 0}
     returning = False          # inside a return phase (see return_eps)
     offset, j_ret = None, 0    # last correction offset in Θ, frames since the last correction
 
@@ -273,6 +276,16 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
             offset = out[k:k + 1] - poses[k:k + 1].to(body.dtype)
         if not collides(out[k:k + 1], k):
             last_free = out[k:k + 1].clone()
+    if smooth_sigma:
+        modified = (out - poses.to(body.dtype)).abs().amax(-1) > 1e-9
+        if modified.any():
+            t = torch.arange(N, device=out.device, dtype=out.dtype)
+            W = torch.exp(-(t[:, None] - t[None]) ** 2 / (2 * smooth_sigma ** 2))
+            smoothed = (W / W.sum(-1, keepdim=True)) @ out
+            for k in modified.nonzero().squeeze(-1).tolist():
+                if not collides(smoothed[k:k + 1], k):
+                    out[k] = smoothed[k]
+                    stats["smoothed"] += 1
     if progress:
         print(f"  start pose used: {stats}", flush=True)
     if skipped:
