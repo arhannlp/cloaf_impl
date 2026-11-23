@@ -200,7 +200,8 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
     out = poses.clone().to(body.dtype)
     last_free = None          # most recent output pose known to be collision-free
     skipped = []
-    stats = {"previous frame": 0, "last free pose": 0, "jitter": 0, "skipped": 0, "failed": 0,
+    stats = {"previous frame": 0, "last free pose": 0, "jitter": 0, "rest pose": 0, "skipped": 0,
+             "failed": 0,
              "return phase": 0, "smoothed": 0}
     returning = False          # inside a return phase (see return_eps)
     offset, j_ret = None, 0    # last correction offset in Θ, frames since the last correction
@@ -208,9 +209,13 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
     def collides(theta, k):
         return body.count_collisions(body.vertices(theta, sel(betas, k), sel(global_orient, k)))[0] > body.collision_min
 
+    rest = torch.zeros(1, poses.shape[1], device=out.device, dtype=body.dtype)
+
     def start_pose(candidate, k):
         """Collision-free Θ0 for frame k, cheapest option first:
-        previous output -> last collision-free output -> a short jitter search."""
+        previous output -> last collision-free output -> a short jitter search ->
+        the rest pose (zero body pose: collision-free by construction, a one-pose version of
+        the paper's Keyposes strategy, Sec. 4.5)."""
         if candidate is not None and not collides(candidate, k):
             stats["previous frame"] += 1
             return candidate
@@ -224,7 +229,11 @@ def correct_sequence(body, field, poses, betas=None, global_orient=None,
             stats["jitter"] += 1
             return th
         except RuntimeError:
-            return None
+            pass
+        if not collides(rest, k):
+            stats["rest pose"] += 1
+            return rest.clone()
+        return None
 
     import time
     t_start = time.time()

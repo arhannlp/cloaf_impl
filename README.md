@@ -7,6 +7,32 @@ The official code (github.com/cvlab-epfl/CLOAF) was not available, so this is a 
 
 ---
 
+## Quick start: correct a motion sequence
+
+```bash
+python scripts/cloaf_correct.py --smpl data/body_models/smpl --input motion.npz --output motion_cloaf.npz
+```
+
+```bash
+python scripts/render_gif.py --smpl data/body_models/smpl --result motion_cloaf.npz
+```
+
+The input is an AMASS file or an `.npz` with `body_pose` (N,69) and optionally `global_orient`, `betas`, `transl`. The first command prints the colliding frames before and after; the second writes `motion_cloaf.gif` with the input (left) and the CLOAF output (right), colliding faces in red. In Colab, use the last cell of `notebooks/colab_cloaf.ipynb`.
+
+The default settings (`cloaf/pipeline.py`, all of them can be changed on the command line) are the ones that worked best in our experiments (`docs/report_template.md`):
+
+| Setting | Default | Why |
+|---|---|---|
+| Field | `smooth_target` (training-free) | Works without training; a trained network can be passed with `--field checkpoint.pt` |
+| Projection | contact-constrained, 5 cm | The paper's plain J^+ brings the collisions back (Sec. 5b of the report) |
+| Frames corrected | colliding only (> 50 colliding vertices) | Keeps the clean frames untouched |
+| Return phase | fade out by 0.7 per frame until < 5 mm | No jump back at the end of a corrected stretch |
+| Temporal smoothing | σ = 1.5 frames | Removes the frame-to-frame jitter inside corrected stretches |
+| Start pose | previous output → last collision-free → jitter → rest pose | Also handles sequences that start colliding |
+| Solver | RK4, 10 steps, 1000 surface points | ~1.5 s/frame on a T4 for corrected frames |
+
+---
+
 ## Current status: what works and what does not
 
 | Part | Status | Needs |
@@ -15,7 +41,8 @@ The official code (github.com/cvlab-epfl/CLOAF) was not available, so this is a 
 | Self-intersection detector (`collision.py`) | Works; tested on a fake mesh | Calibration against Table 1 |
 | Simple hand-crafted field (Sec. 4.4) | Works; **no training needed** | SMPL files |
 | Learned motion field `f_ω` (`model.py`) | Code runs, but the network is **untrained** | Training on AMASS (GPU) |
-| Pose correction (`correct_sequence`, `run_on_sequence.py`) | Code runs, but the output is **meaningless until `f_ω` is trained** | A trained checkpoint |
+| **Pose correction, training-free field + contact constraint (`cloaf_correct.py`)** | **Works**: removes the injected self-intersections on held-out AMASS (SFU) sequences | SMPL files, a GPU recommended |
+| Pose correction with the learned field | Runs, but the network is under-trained (moves the body away from the target) | Longer training on a proper GPU |
 | Training-free fields `point_target` (Supp. C baseline) and `smooth_target` (our variant) | Code runs; not yet tested on the real body | SMPL files |
 | 3DPW evaluation (`eval_3dpw.py`) | Draft | 3DPW, HMR2.0 predictions, `J_regressor_h36m.npy` |
 
@@ -186,6 +213,7 @@ cloaf/
                   X(Θ), Jacobian (finite differences or jacfwd, float64), J^† f   [Sec. 3, Eq. 3-5]
   model.py        f_ω: Fourier features (n_f=20) + 6-layer concat-MLP (ShapeFlow style),
                   inputs (x, Θ(t), Θ1, Δt), output scaled by expected speed        [Sec. 3, Eq. 8]
+  pipeline.py     the working pipeline: chosen defaults, correct(...)
   integrate.py    ODE (Eq. 6) + dopri5; simple target field (Eq. 10-11, C.14);
                   sequence correction: mode="all" (paper) / "colliding_only" (extension); Jitter
   train.py        AMASS preparation, pair sampling, trajectory loss (Eq. 9, linear Θ~)
@@ -196,7 +224,11 @@ scripts/
   demo_target_field.py Step 2: Fig. 3/4 (no training)
   convert_smpl_pkl.py  official SMPL v1.1.0 zip -> chumpy-free SMPL_*.pkl for smplx
   prepare_amass.py     AMASS (SMPL+H) -> one training file
+  cloaf_correct.py     ONE COMMAND: correct any SMPL motion with the chosen settings
+  render_gif.py        input vs CLOAF output as an animated GIF (headless, Colab)
   run_on_sequence.py   CLOAF on one sequence, optional injected collisions, before/after numbers
+  free_flow_test.py    free flow vs projected flow (where the guarantee breaks)
+  plot_jerk.py         per-frame jerk / distance / collisions of several results
   view_results.py      side-by-side animation of input vs CLOAF output (aitviewer)
   eval_3dpw.py         Steps 3 and 5: Table 1, 2, 4
 notebooks/
