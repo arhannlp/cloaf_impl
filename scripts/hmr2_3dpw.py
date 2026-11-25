@@ -94,7 +94,11 @@ def main():
     results = {}
     if os.path.exists(a.out):
         results = {k: v.item() for k, v in np.load(a.out, allow_pickle=True).items()}
-        print(f"resuming: {len(results)} tracks already in {a.out}")
+        old = [k for k, v in results.items() if v.get("image_index") != "frame"]
+        for k in old:              # written by the first version, which read the wrong images
+            del results[k]
+        print(f"resuming: {len(results)} tracks already in {a.out}"
+              + (f" ({len(old)} outdated tracks dropped)" if old else ""))
 
     def save():
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +121,7 @@ def main():
             frames = np.nonzero(np.asarray(d["campose_valid"][p]).astype(bool))[0]
             if a.max_frames:
                 frames = frames[:a.max_frames]
-            used, preds, items = [], [], []
+            used, preds, items, missing = [], [], [], 0
 
             def run(items):
                 batch = torch.utils.data.default_collate(items)
@@ -129,9 +133,12 @@ def main():
                         sp["betas"].reshape(-1, 10).double().cpu())
 
             for t in frames:
-                img = cv2.imread(os.path.join(a.pw3d, "imageFiles", seq,
-                                              f"image_{int(d['img_frame_ids'][t]):05d}.jpg"))
+                # poses[p][t] belongs to image_{t:05d}.jpg (as in SPIN / VIBE preprocessing);
+                # img_frame_ids is not an index into imageFiles
+                path = os.path.join(a.pw3d, "imageFiles", seq, f"image_{int(t):05d}.jpg")
+                img = cv2.imread(path) if os.path.exists(path) else None
                 if img is None:
+                    missing += 1
                     continue
                 box = box_from_2d(np.asarray(d["poses2d"][p][t]))
                 if box is None:
@@ -150,8 +157,11 @@ def main():
                 print(f"{key}: no frames")
                 continue
             bp, go, be = (torch.cat([x[i] for x in preds]).numpy() for i in range(3))
-            results[key] = dict(frames=np.array(used), body_pose=bp, global_orient=go, betas=be)
-            print(f"{key}: {len(used)}/{len(frames)} frames  ({time.time() - t0:.0f} s)", flush=True)
+            results[key] = dict(frames=np.array(used), body_pose=bp, global_orient=go, betas=be,
+                                image_index="frame")
+            print(f"{key}: {len(used)}/{len(frames)} frames"
+                  + (f", {missing} images missing" if missing else "")
+                  + f"  ({time.time() - t0:.0f} s)", flush=True)
         save()
     print(f"saved {a.out}: {len(results)} tracks, {sum(len(v['frames']) for v in results.values())} frames")
 
