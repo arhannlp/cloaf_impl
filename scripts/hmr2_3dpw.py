@@ -74,7 +74,20 @@ def main():
     vitdet.print = lambda *args, **kw: None          # the dataset prints one line per crop
 
     download_models(CACHE_DIR_4DHUMANS)
-    model, cfg = load_hmr2(DEFAULT_CHECKPOINT)
+    # PyTorch >= 2.6 loads checkpoints with weights_only=True, which rejects the omegaconf config
+    # stored in the official HMR2.0 checkpoint. The file comes from the 4D-Humans authors, so it is
+    # loaded the way it was saved (weights_only=False).
+    _torch_load = torch.load
+
+    def _load_full(*args, **kw):
+        kw["weights_only"] = False
+        return _torch_load(*args, **kw)
+
+    torch.load = _load_full
+    try:
+        model, cfg = load_hmr2(DEFAULT_CHECKPOINT)
+    finally:
+        torch.load = _torch_load
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(dev).eval()
 
