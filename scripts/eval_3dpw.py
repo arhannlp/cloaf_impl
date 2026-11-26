@@ -121,6 +121,12 @@ def main():
 
     M = dict(mpjpe=[], pa=[], accel=[], counts=[])
     saved = {}
+    # per-track results are cached next to --out, so an interrupted run continues where it stopped
+    cache_path = (a.out[:-4] if a.out and a.out.endswith(".npz") else (a.out or "")) + ".partial.npz"
+    cache = {}
+    if a.out and os.path.exists(cache_path):
+        cache = {k: v.item() for k, v in np.load(cache_path, allow_pickle=True).items()}
+        print(f"resuming: {len(cache)} tracks already evaluated in {cache_path}")
     t0 = time.time()
     for f in sorted(glob.glob(os.path.join(a.pw3d, "sequenceFiles", "test", "*.pkl"))):
         with open(f, "rb") as fh:
@@ -137,6 +143,12 @@ def main():
             fr = np.asarray(P["frames"])
             if a.max_frames:
                 fr = fr[:a.max_frames]
+            if key in cache:
+                c = cache[key]
+                for k in M:
+                    M[k].append(torch.as_tensor(c[k]))
+                saved[key] = c["saved"]
+                continue
             n = len(fr)
             bp = torch.as_tensor(P["body_pose"][:n], device=dev, dtype=f64)
             go = torch.as_tensor(P["global_orient"][:n], device=dev, dtype=f64)
@@ -163,6 +175,11 @@ def main():
             if a.out:
                 saved[key] = dict(frames=fr, body_pose=bp.cpu().numpy(), global_orient=go.cpu().numpy(),
                                   betas=be.cpu().numpy(), mpjpe=mp.cpu().numpy(), counts=counts.cpu().numpy())
+            if a.out:
+                cache[key] = dict(mpjpe=mp.cpu().numpy(), pa=pa.cpu().numpy(), accel=acc.cpu().numpy(),
+                                  counts=counts.cpu().numpy(), saved=saved[key])
+                Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
+                np.savez(cache_path, **{k: np.array(v, dtype=object) for k, v in cache.items()})
             print(f"{key}: {n} frames, MPJPE {mp.mean():.1f}, P-MPJPE {pa.mean():.1f}, "
                   f"Col@0 {collision_rate(counts, 0):.1f} %  ({time.time() - t0:.0f} s)", flush=True)
 
