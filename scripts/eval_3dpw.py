@@ -126,6 +126,7 @@ def main():
     cache = {}
     if a.out and os.path.exists(cache_path):
         cache = {k: v.item() for k, v in np.load(cache_path, allow_pickle=True).items()}
+        cache = {k: v for k, v in cache.items() if v.get("joints") == jname}   # same joints only
         print(f"resuming: {len(cache)} tracks already evaluated in {cache_path}")
     t0 = time.time()
     for f in sorted(glob.glob(os.path.join(a.pw3d, "sequenceFiles", "test", "*.pkl"))):
@@ -177,7 +178,7 @@ def main():
                                   betas=be.cpu().numpy(), mpjpe=mp.cpu().numpy(), counts=counts.cpu().numpy())
             if a.out:
                 cache[key] = dict(mpjpe=mp.cpu().numpy(), pa=pa.cpu().numpy(), accel=acc.cpu().numpy(),
-                                  counts=counts.cpu().numpy(), saved=saved[key])
+                                  counts=counts.cpu().numpy(), saved=saved[key], joints=jname)
                 Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
                 np.savez(cache_path, **{k: np.array(v, dtype=object) for k, v in cache.items()})
             print(f"{key}: {n} frames, MPJPE {mp.mean():.1f}, P-MPJPE {pa.mean():.1f}, "
