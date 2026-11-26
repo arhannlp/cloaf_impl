@@ -6,10 +6,19 @@ Supervisor's guidance: focus on reproducing the paper's experiments first; no ex
 |---|---|---|
 | Fig. 5, Fig. B.7/B.8: Jacobian accuracy vs. points and step size | SMPL | done, matches |
 | Fig. 3, Fig. 4: simple fields, moving the arm to a target, box obstacle (Sec. 4.4) | SMPL | code done (`scripts/demo_target_field.py`); figures to make |
-| Table 1: Col.Rate of SOTA methods on 3DPW-test | 3DPW + HMR2.0 (+ PARE, TUCH, EFT, SPIN) | HMR2.0: scripts ready (R1–R3); others later |
+| Table 1: Col.Rate of SOTA methods on 3DPW-test | 3DPW + HMR2.0 (+ PARE, TUCH, EFT, SPIN) | HMR2.0 done (below); others later |
 | Table 2: CLOAF vs. HMR2.0 (MPJPE, P-MPJPE, Accel, Col.Rate) | 3DPW + HMR2.0 + trained network | needs the trained network |
 | Table 4: start pose strategies (successive frames, jitter, keyposes) | 3DPW + HMR2.0, AMASS for keyposes | keyposes to implement |
 | Table 3: fine-tuning EFT with CLOAF | 3DPW-train, COCO-EFT | last, optional |
+
+## HMR2.0 on 3DPW-test (35,515 frames, 37 tracks)
+
+|  | MPJPE | P-MPJPE | Accel | Col@0 | Col@100 |
+|---|---|---|---|---|---|
+| ours | 80.9 | 53.9 | 16.8 | 48.1 % | 23.2 % |
+| paper | 82.0 | 52.7 | 16.1 | 39.2 % | 21.6 % |
+
+Accuracy and Col@100 match; our test flags more frames with only a few colliding vertices (Col@0). See `scripts/col_curve.py`.
 
 ## Steps
 
