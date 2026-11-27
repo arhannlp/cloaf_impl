@@ -44,9 +44,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--smpl", required=True)
     ap.add_argument("--out", default="results/fig34")
-    ap.add_argument("--T", type=float, default=400.0, help="integration time (F = 1e-3 m per unit)")
+    ap.add_argument("--T", type=float, default=1000.0,
+                    help="integration time; the hand moves at most F*T = 1 m (F = 1e-3 m per unit)")
     ap.add_argument("--steps", type=int, default=41, help="saved time steps")
-    ap.add_argument("--substeps", type=int, default=100, help="RK4 steps")
+    ap.add_argument("--substeps", type=int, default=200, help="RK4 steps")
     ap.add_argument("--S", type=int, default=1000)
     ap.add_argument("--azim", type=float, default=35)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
